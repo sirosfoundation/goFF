@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    paths:
+      - "**"
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Verify formatting
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Unformatted files found"
+            gofmt -l .
+            exit 1
+          fi
+
+      - name: Test
+        run: go test -race ./...

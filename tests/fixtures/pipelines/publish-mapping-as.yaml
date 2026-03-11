@@ -1,0 +1,6 @@
+pipeline:
+  - load:
+      entities:
+        - https://idp.example.org/idp
+  - publish:
+      as: nested/from-mapping-as.txt

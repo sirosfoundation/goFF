@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" Name="https://metadata.example.org/aggregate" cacheDuration="PT5H" validUntil="P10D">
+  <md:EntityDescriptor entityID="https://idp.example.org/idp"></md:EntityDescriptor>
+</md:EntitiesDescriptor>

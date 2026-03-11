@@ -1,0 +1,3 @@
+https://bridge.example.org/bridge
+https://sp.example.org/sp
+https://sp.example.org/sp

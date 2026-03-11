@@ -1,0 +1,8 @@
+- when update:
+  - load:
+      entities:
+        - https://idp.example.org/idp
+- when request:
+  - emit application/json
+- when accept application/json:
+  - emit application/json

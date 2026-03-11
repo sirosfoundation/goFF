@@ -1,0 +1,3 @@
+pipeline:
+  - load
+  - publish nested/entities.txt

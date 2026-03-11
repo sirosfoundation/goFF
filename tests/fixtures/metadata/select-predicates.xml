@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" xmlns:mdattr="urn:oasis:names:tc:SAML:metadata:attribute" xmlns:mdrpi="urn:oasis:names:tc:SAML:metadata:rpi" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">
+  <md:EntityDescriptor entityID="https://idp.example.org/idp">
+    <md:IDPSSODescriptor/>
+    <md:Extensions>
+      <mdrpi:RegistrationInfo registrationAuthority="https://authority.example.org"/>
+      <mdattr:EntityAttributes>
+        <saml:Attribute Name="http://macedir.org/entity-category">
+          <saml:AttributeValue>https://refeds.org/category/research-and-scholarship</saml:AttributeValue>
+        </saml:Attribute>
+      </mdattr:EntityAttributes>
+    </md:Extensions>
+  </md:EntityDescriptor>
+  <md:EntityDescriptor entityID="https://sp.example.org/sp">
+    <md:SPSSODescriptor/>
+    <md:Extensions>
+      <mdrpi:RegistrationInfo registrationAuthority="https://other.example.org"/>
+      <mdattr:EntityAttributes>
+        <saml:Attribute Name="http://macedir.org/entity-category">
+          <saml:AttributeValue>https://example.org/category/other</saml:AttributeValue>
+        </saml:Attribute>
+      </mdattr:EntityAttributes>
+    </md:Extensions>
+  </md:EntityDescriptor>
+  <md:EntityDescriptor entityID="https://bridge.example.org/bridge">
+    <md:IDPSSODescriptor/>
+    <md:SPSSODescriptor/>
+    <md:Extensions>
+      <mdrpi:RegistrationInfo registrationAuthority="https://authority.example.org"/>
+      <mdattr:EntityAttributes>
+        <saml:Attribute Name="http://macedir.org/entity-category">
+          <saml:AttributeValue>https://refeds.org/category/research-and-scholarship</saml:AttributeValue>
+        </saml:Attribute>
+      </mdattr:EntityAttributes>
+    </md:Extensions>
+  </md:EntityDescriptor>
+</md:EntitiesDescriptor>

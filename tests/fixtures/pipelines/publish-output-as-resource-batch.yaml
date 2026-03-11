@@ -1,0 +1,5 @@
+pipeline:
+  - load:
+      entities:
+        - https://idp.example.org/idp
+  - publish output as resource nested/resource-publish.txt

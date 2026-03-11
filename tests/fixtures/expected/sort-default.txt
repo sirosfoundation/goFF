@@ -1,0 +1,2 @@
+https://a.example.org
+https://b.example.org

@@ -1,0 +1,2 @@
+https://bridge.example.org/bridge
+https://idp.example.org/idp

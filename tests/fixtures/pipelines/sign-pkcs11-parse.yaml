@@ -1,0 +1,17 @@
+sources:
+  - id: federation
+    entities:
+      - https://idp.example.org/idp
+
+pipeline:
+  - load:
+      source: federation
+  - sign:
+      cert: /tmp/sign.crt
+      pkcs11:
+        module_path: /usr/lib/softhsm/libsofthsm2.so
+        slot_id: 0
+        pin: "1234"
+        key_label: signing-key
+  - publish:
+      output: aggregate.xml

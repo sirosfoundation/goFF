@@ -1,0 +1,11 @@
+pipeline:
+  - load:
+      entities:
+        - https://idp.example.org/idp
+        - https://sp.example.org/sp
+  - reginfo:
+      authority: https://example.org/authority
+  - select:
+      registration_authority: https://example.org/authority
+  - publish:
+      output: reginfo-authority.txt

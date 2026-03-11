@@ -1,0 +1,2 @@
+https://idp.example.org/idp
+https://sp.example.org/sp

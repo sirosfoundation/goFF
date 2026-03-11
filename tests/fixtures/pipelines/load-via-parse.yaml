@@ -1,0 +1,5 @@
+pipeline:
+  - load:
+      source: federation
+      via:
+        - /idp-only

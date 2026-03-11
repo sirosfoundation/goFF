@@ -1,0 +1,13 @@
+pipeline:
+  - load:
+      entities:
+        - https://idp.example.org/idp
+        - https://sp.example.org/sp
+  - pubinfo:
+      publisher: SIROS Foundation
+      url: https://publisher.example.org
+      lang: en
+  - select:
+      match: url:https://publisher.example.org
+  - publish:
+      output: pubinfo-url-lang-match.txt

@@ -1,0 +1,12 @@
+pipeline:
+  - load:
+      entities:
+        - https://idp.example.org/idp
+        - https://sp.example.org/sp
+  - setattr:
+      name: custom_tag
+      value: Example Value
+  - select:
+      match: custom_tag:example value
+  - publish:
+      output: setattr-structured-match.txt

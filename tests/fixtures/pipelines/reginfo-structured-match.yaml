@@ -1,0 +1,12 @@
+pipeline:
+  - load:
+      entities:
+        - https://idp.example.org/idp
+        - https://sp.example.org/sp
+  - reginfo:
+      authority: https://example.org/authority
+      policy: https://example.org/policy
+  - select:
+      match: policy:https://example.org/policy
+  - publish:
+      output: reginfo-structured-match.txt

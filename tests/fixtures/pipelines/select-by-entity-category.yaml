@@ -1,0 +1,12 @@
+sources:
+  - id: federation
+    files:
+      - ../metadata/select-predicates.xml
+
+pipeline:
+  - load:
+      source: federation
+  - select:
+      entity_category: https://refeds.org/category/research-and-scholarship
+  - publish:
+      output: category-rs.txt

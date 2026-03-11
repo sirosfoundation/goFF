@@ -1,0 +1,8 @@
+pipeline:
+  - load:
+      entities:
+        - https://b.example.org
+        - https://a.example.org
+  - sort
+  - publish:
+      output: sort-default.txt

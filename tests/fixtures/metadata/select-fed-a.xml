@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata">
+  <md:EntityDescriptor entityID="https://idp.example.org/idp">
+    <md:IDPSSODescriptor/>
+  </md:EntityDescriptor>
+  <md:EntityDescriptor entityID="https://bridge.example.org/bridge">
+    <md:IDPSSODescriptor/>
+    <md:SPSSODescriptor/>
+  </md:EntityDescriptor>
+</md:EntitiesDescriptor>

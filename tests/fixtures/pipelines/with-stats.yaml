@@ -1,0 +1,15 @@
+sources:
+  - id: federation
+    entities:
+      - https://idp.example.org/idp
+      - https://sp.example.org/sp
+
+pipeline:
+  - load:
+      source: federation
+  - select:
+      entities:
+        - https://idp.example.org/idp
+  - stats
+  - publish:
+      output: entities.txt

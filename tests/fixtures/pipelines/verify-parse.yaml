@@ -1,0 +1,8 @@
+pipeline:
+  - load:
+      entities:
+        - https://idp.example.org/idp
+  - verify:
+      cert: /tmp/verify.crt
+  - publish:
+      output: signed.xml

@@ -1,0 +1,7 @@
+pipeline:
+  - remote:
+      source: federation
+  - local:
+      source: federation
+  - _fetch:
+      source: federation

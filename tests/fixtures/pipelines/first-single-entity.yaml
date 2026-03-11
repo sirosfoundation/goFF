@@ -1,0 +1,7 @@
+pipeline:
+  - load:
+      entities:
+        - https://idp.example.org/idp
+  - first
+  - publish:
+      output: first-single.xml

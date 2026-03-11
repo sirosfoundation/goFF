@@ -1,0 +1,14 @@
+sources:
+  - id: fed-a
+    files:
+      - ../metadata/select-fed-a.xml
+  - id: fed-b
+    files:
+      - ../metadata/select-fed-b.xml
+pipeline:
+  - load:
+      source: fed-a
+  - select:
+      selector: "fed-b!//md:EntityDescriptor[md:SPSSODescriptor]"
+  - publish:
+      output: source-xpath.txt

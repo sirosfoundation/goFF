@@ -1,0 +1,13 @@
+sources:
+  - id: federation
+    entities:
+      - https://idp.example.org/idp
+
+pipeline:
+  - load:
+      source: federation
+  - sign:
+      key: /tmp/sign.key
+      cert: /tmp/sign.crt
+  - publish:
+      output: aggregate.xml

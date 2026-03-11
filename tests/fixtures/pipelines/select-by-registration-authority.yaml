@@ -1,0 +1,12 @@
+sources:
+  - id: federation
+    files:
+      - ../metadata/select-predicates.xml
+
+pipeline:
+  - load:
+      source: federation
+  - select:
+      registration_authority: https://authority.example.org
+  - publish:
+      output: reg-auth.txt

@@ -1,0 +1,8 @@
+pipeline:
+  - load:
+      entities:
+        - https://idp.example.org/idp
+  - select as /foo dedup false:
+      - '!//md:EntityDescriptor[md:SPSSODescriptor]'
+  - publish:
+      output: entities.txt
