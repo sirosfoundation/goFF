@@ -1,0 +1,13 @@
+- load:
+    entities:
+      - https://idp.example.org/idp
+      - https://sp.example.org/sp
+- setattr:
+    name: roles
+    values:
+      - idp
+      - authority
+- select:
+    role: idp
+- publish:
+    output: setattr-roles.txt

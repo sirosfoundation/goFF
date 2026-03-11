@@ -512,16 +512,16 @@ func TestParseFileRejectsInvalidSortArgumentKind(t *testing.T) {
 func TestParseFileRejectsKnownUnsupportedAction(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "pipeline.yaml")
-	yaml := "- load\n- xslt:\n    stylesheet: foo.xsl\n"
+	yaml := "- load\n- signcerts\n"
 	if err := os.WriteFile(fixture, []byte(yaml), 0o600); err != nil {
 		t.Fatalf("failed writing fixture: %v", err)
 	}
 
 	_, err := ParseFile(fixture)
 	if err == nil {
-		t.Fatal("expected ParseFile error for unsupported action xslt")
+		t.Fatal("expected ParseFile error for unsupported action signcerts")
 	}
-	if !strings.Contains(err.Error(), "xslt") {
+	if !strings.Contains(err.Error(), "signcerts") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

@@ -23,25 +23,54 @@ type Result struct {
 	Verify    VerifyStep
 }
 
+// ExecuteOptions controls optional behavior of Execute.
+type ExecuteOptions struct {
+	// Progress, if non-nil, is called after each step with the step index,
+	// action name, and a brief status message.
+	Progress func(step int, action, msg string)
+}
+
 // Execute runs a parsed pipeline file.
-func Execute(p File, outputDir string) (Result, error) {
-	// sourceMap holds in-pipeline aliases produced by "select as /name" steps.
-	sourceMap := make(map[string][]string)
-	sourceAttrs := make(map[string]map[string]EntityAttributes)
-	sourceXML := make(map[string]map[string]string)
+func Execute(p File, outputDir string, opts ...ExecuteOptions) (Result, error) {
+	var o ExecuteOptions
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+	return executeSteps(
+		p.Pipeline, outputDir, p.BaseDir,
+		make(map[string][]string),
+		make(map[string]map[string]EntityAttributes),
+		make(map[string]map[string]string),
+		make([]string, 0),
+		make(map[string]EntityAttributes),
+		make(map[string]string),
+		FinalizeStep{}, SignStep{}, VerifyStep{},
+		o,
+	)
+}
 
-	current := make([]string, 0)
-	currentAttrs := make(map[string]EntityAttributes)
-	currentXML := make(map[string]string)
+// executeSteps runs a sequence of pipeline steps starting from the provided
+// initial state.  It is called recursively by fork/pipe/parsecopy to run
+// sub-pipelines on a copy of the current state.
+func executeSteps(
+	steps []Step, outputDir, baseDir string,
+	sourceMap map[string][]string,
+	sourceAttrs map[string]map[string]EntityAttributes,
+	sourceXML map[string]map[string]string,
+	current []string,
+	currentAttrs map[string]EntityAttributes,
+	currentXML map[string]string,
+	finalizeCfg FinalizeStep,
+	signCfg SignStep,
+	verifyCfg VerifyStep,
+	opts ExecuteOptions,
+) (Result, error) {
 	publishFirst := false
-	finalizeCfg := FinalizeStep{}
-	signCfg := SignStep{}
-	verifyCfg := VerifyStep{}
 
-	for i, step := range p.Pipeline {
+	for i, step := range steps {
 		switch step.Action {
 		case "load", "local", "remote", "fetch", "_fetch":
-			loaded, attrs, docs, err := runLoad(step.Load, p.BaseDir, sourceMap, sourceAttrs, sourceXML)
+			loaded, attrs, docs, err := runLoad(step.Load, baseDir, sourceMap, sourceAttrs, sourceXML)
 			if err != nil {
 				return Result{}, fmt.Errorf("step %d load: %w", i, err)
 			}
@@ -92,7 +121,7 @@ func Execute(p File, outputDir string) (Result, error) {
 		case "verify":
 			verifyCfg = step.Verify
 		case "publish":
-			if err := runPublish(step.Publish, outputDir, current, finalizeCfg, signCfg, verifyCfg, publishFirst); err != nil {
+			if err := runPublish(step.Publish, outputDir, current, currentXML, finalizeCfg, signCfg, verifyCfg, publishFirst); err != nil {
 				return Result{}, fmt.Errorf("step %d publish: %w", i, err)
 			}
 		case "stats":
@@ -101,6 +130,49 @@ func Execute(p File, outputDir string) (Result, error) {
 			runInfo(current)
 		case "dump", "print":
 			runDump(current)
+		case "nodecountry":
+			currentAttrs = runNodeCountry(current, currentAttrs, currentXML)
+			syncCurrentAttrsToSources(current, currentAttrs, sourceAttrs)
+		case "certreport":
+			runCertReport(current, currentXML)
+		case "discojson":
+			if err := runDiscoJSON(step.DiscoJSON, outputDir, current, currentAttrs, currentXML, ""); err != nil {
+				return Result{}, fmt.Errorf("step %d discojson: %w", i, err)
+			}
+		case "discojson_idp":
+			if err := runDiscoJSON(step.DiscoJSON, outputDir, current, currentAttrs, currentXML, "idp"); err != nil {
+				return Result{}, fmt.Errorf("step %d discojson_idp: %w", i, err)
+			}
+		case "discojson_sp":
+			if err := runDiscoJSON(step.DiscoJSON, outputDir, current, currentAttrs, currentXML, "sp"); err != nil {
+				return Result{}, fmt.Errorf("step %d discojson_sp: %w", i, err)
+			}
+		case "xslt":
+			newIDs, newAttrs, newXML, err := runXSLT(step.XSLT, baseDir, current, currentXML)
+			if err != nil {
+				return Result{}, fmt.Errorf("step %d xslt: %w", i, err)
+			}
+			current = newIDs
+			currentAttrs = newAttrs
+			currentXML = newXML
+			syncCurrentAttrsToSources(current, currentAttrs, sourceAttrs)
+			publishFirst = false
+		case "fork", "pipe", "parsecopy":
+			// Run sub-pipeline on a snapshot of current state; outer state is unchanged.
+			_, err := executeSteps(
+				step.Fork.Pipeline, outputDir, baseDir,
+				cloneSourceMap(sourceMap),
+				cloneSourceAttrsMap(sourceAttrs),
+				cloneSourceXMLMap(sourceXML),
+				append([]string(nil), current...),
+				cloneAttrs(currentAttrs),
+				cloneEntityXML(currentXML),
+				finalizeCfg, signCfg, verifyCfg,
+				opts,
+			)
+			if err != nil {
+				return Result{}, fmt.Errorf("step %d fork: %w", i, err)
+			}
 		case "break", "end":
 			return Result{
 				Entities:  append([]string(nil), current...),
@@ -111,6 +183,10 @@ func Execute(p File, outputDir string) (Result, error) {
 			}, nil
 		default:
 			return Result{}, fmt.Errorf("step %d: unsupported action %q", i, step.Action)
+		}
+
+		if opts.Progress != nil {
+			opts.Progress(i, step.Action, fmt.Sprintf("entities=%d", len(current)))
 		}
 	}
 
@@ -1168,6 +1244,30 @@ func cloneEntityXML(in map[string]string) map[string]string {
 	return out
 }
 
+func cloneSourceMap(m map[string][]string) map[string][]string {
+	out := make(map[string][]string, len(m))
+	for k, v := range m {
+		out[k] = append([]string(nil), v...)
+	}
+	return out
+}
+
+func cloneSourceAttrsMap(m map[string]map[string]EntityAttributes) map[string]map[string]EntityAttributes {
+	out := make(map[string]map[string]EntityAttributes, len(m))
+	for k, v := range m {
+		out[k] = cloneAttrs(v)
+	}
+	return out
+}
+
+func cloneSourceXMLMap(m map[string]map[string]string) map[string]map[string]string {
+	out := make(map[string]map[string]string, len(m))
+	for k, v := range m {
+		out[k] = cloneEntityXML(v)
+	}
+	return out
+}
+
 func mergeRepositoryAttrs(current map[string]EntityAttributes, sources map[string]map[string]EntityAttributes) map[string]EntityAttributes {
 	out := cloneAttrs(current)
 	for _, attrs := range sources {
@@ -1207,7 +1307,11 @@ func resolveSourcePaths(src Source, baseDir string) Source {
 	return src
 }
 
-func runPublish(cfg PublishStep, outputDir string, current []string, fin FinalizeStep, signCfg SignStep, verifyCfg VerifyStep, first bool) error {
+func runPublish(cfg PublishStep, outputDir string, current []string, currentXML map[string]string, fin FinalizeStep, signCfg SignStep, verifyCfg VerifyStep, first bool) error {
+	if cfg.Dir != "" {
+		return runPublishDir(cfg, outputDir, current, currentXML)
+	}
+
 	outputPath := resolvePublishOutput(cfg)
 	if outputPath == "" {
 		return fmt.Errorf("publish.output is required")
@@ -1298,6 +1402,40 @@ func resolvePublishOutput(cfg PublishStep) string {
 	return ""
 }
 
+// runPublishDir writes one XML file per entity into a directory.
+// Each file is named by the sha256 hex of the entity ID with a .xml extension,
+// matching pyFF directory-publish topology for MDQ static file serving.
+// Raw XML from currentXML is used when available; otherwise a stub EntityDescriptor is generated.
+func runPublishDir(cfg PublishStep, outputDir string, current []string, currentXML map[string]string) error {
+	dir := filepath.Join(outputDir, cfg.Dir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create publish dir: %w", err)
+	}
+
+	for _, entityID := range current {
+		h := sha256.Sum256([]byte(entityID))
+		filename := fmt.Sprintf("%x.xml", h[:])
+		path := filepath.Join(dir, filename)
+
+		var body []byte
+		if raw, ok := currentXML[entityID]; ok && strings.TrimSpace(raw) != "" {
+			body = []byte(raw)
+		} else {
+			var err error
+			body, err = renderEntityXML(entityID)
+			if err != nil {
+				return fmt.Errorf("render entity xml for %s: %w", entityID, err)
+			}
+		}
+
+		if err := os.WriteFile(path, body, 0o644); err != nil {
+			return fmt.Errorf("write entity file %s: %w", filename, err)
+		}
+	}
+
+	return nil
+}
+
 func formatOutput(path string, current []string, fin FinalizeStep, signCfg SignStep, verifyCfg VerifyStep, first bool) ([]byte, error) {
 	hasSign := signCfg.Key != "" || signCfg.Cert != "" || signCfg.PKCS11 != nil
 	hasVerify := verifyCfg.Cert != ""
@@ -1308,7 +1446,11 @@ func formatOutput(path string, current []string, fin FinalizeStep, signCfg SignS
 		if first && len(current) == 1 {
 			b, err = renderEntityXML(current[0])
 		} else {
-			b, err = renderEntitiesXML(current, fin)
+			b, err = renderEntitiesXML(current, AggregateConfig{
+				Name:          fin.Name,
+				CacheDuration: fin.CacheDuration,
+				ValidUntil:    fin.ValidUntil,
+			})
 		}
 		if err != nil {
 			return nil, err
@@ -1350,25 +1492,27 @@ func formatOutput(path string, current []string, fin FinalizeStep, signCfg SignS
 	return []byte(body), nil
 }
 
-type entitiesDescriptor struct {
-	XMLName       xml.Name           `xml:"md:EntitiesDescriptor"`
-	XMLNSMD       string             `xml:"xmlns:md,attr"`
-	Name          string             `xml:"Name,attr,omitempty"`
-	CacheDuration string             `xml:"cacheDuration,attr,omitempty"`
-	ValidUntil    string             `xml:"validUntil,attr,omitempty"`
-	Entities      []entityDescriptor `xml:"md:EntityDescriptor"`
-}
+// renderEntitiesXML renders an md:EntitiesDescriptor containing one stub
+// EntityDescriptor per entity ID (no body XML).  Used by the publish path.
+// cfg.ValidUntil is resolved via ResolveValidUntil so "+48h" syntax works.
+func renderEntitiesXML(current []string, cfg AggregateConfig) ([]byte, error) {
+	type entityDescriptor struct {
+		EntityID string `xml:"entityID,attr"`
+	}
+	type entitiesDescriptor struct {
+		XMLName       xml.Name           `xml:"md:EntitiesDescriptor"`
+		XMLNSMD       string             `xml:"xmlns:md,attr"`
+		Name          string             `xml:"Name,attr,omitempty"`
+		CacheDuration string             `xml:"cacheDuration,attr,omitempty"`
+		ValidUntil    string             `xml:"validUntil,attr,omitempty"`
+		Entities      []entityDescriptor `xml:"md:EntityDescriptor"`
+	}
 
-type entityDescriptor struct {
-	EntityID string `xml:"entityID,attr"`
-}
-
-func renderEntitiesXML(current []string, fin FinalizeStep) ([]byte, error) {
 	doc := entitiesDescriptor{
 		XMLNSMD:       "urn:oasis:names:tc:SAML:2.0:metadata",
-		Name:          fin.Name,
-		CacheDuration: fin.CacheDuration,
-		ValidUntil:    fin.ValidUntil,
+		Name:          cfg.Name,
+		CacheDuration: cfg.CacheDuration,
+		ValidUntil:    ResolveValidUntil(cfg.ValidUntil),
 		Entities:      make([]entityDescriptor, 0, len(current)),
 	}
 

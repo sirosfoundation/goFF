@@ -1,0 +1,6 @@
+- load:
+    entities:
+      - https://idp.example.org/idp
+      - https://sp.example.org/sp
+- publish:
+    dir: entities

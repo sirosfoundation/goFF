@@ -26,32 +26,37 @@ type Source struct {
 
 // Step is one pipeline operation.
 type Step struct {
-	Action   string
-	Load     LoadStep
-	Select   SelectStep
-	Filter   SelectStep
-	Pick     SelectStep
-	SetAttr  SetAttrStep
-	RegInfo  RegInfoStep
-	PubInfo  PubInfoStep
-	Sort     SortStep
-	Finalize FinalizeStep
-	Sign     SignStep
-	Verify   VerifyStep
-	Publish  PublishStep
-	Stats    StatsStep
+	Action      string
+	Load        LoadStep
+	Select      SelectStep
+	Filter      SelectStep
+	Pick        SelectStep
+	SetAttr     SetAttrStep
+	RegInfo     RegInfoStep
+	PubInfo     PubInfoStep
+	Sort        SortStep
+	Finalize    FinalizeStep
+	Sign        SignStep
+	Verify      VerifyStep
+	Publish     PublishStep
+	Stats       StatsStep
+	NodeCountry NodeCountryStep
+	CertReport  CertReportStep
+	DiscoJSON   DiscoJSONStep
+	XSLT        XSLTStep
+	Fork        ForkStep
 }
 
 // LoadStep loads metadata into the pipeline.
 // Resources are given directly as files, URLs, or inline entity IDs.
 // In-pipeline aliases produced by "select as /name" can be referenced in Files.
 type LoadStep struct {
-	Files   []string `yaml:"files"`
-	URLs    []string `yaml:"urls"`
-	Verify  string   `yaml:"verify"`
-	Timeout string   `yaml:"timeout"`
-	Retries int      `yaml:"retries"`
-	Cleanup bool     `yaml:"cleanup"`
+	Files    []string `yaml:"files"`
+	URLs     []string `yaml:"urls"`
+	Verify   string   `yaml:"verify"`
+	Timeout  string   `yaml:"timeout"`
+	Retries  int      `yaml:"retries"`
+	Cleanup  bool     `yaml:"cleanup"`
 	Entities []string `yaml:"entities"`
 	Via      []string `yaml:"via"`
 }
@@ -101,6 +106,7 @@ type PublishStep struct {
 	Output      string `yaml:"output"`
 	As          string `yaml:"as"`
 	Resource    string `yaml:"resource"`
+	Dir         string `yaml:"dir"`
 	HashLink    bool   `yaml:"hash_link"`
 	UpdateStore bool   `yaml:"update_store"`
 	StoreDir    string `yaml:"store_dir"`
@@ -159,7 +165,70 @@ type PKCS11SignSettings struct {
 // Empty configuration uses defaults.
 type StatsStep struct{}
 
+// NodeCountryStep enriches entities with country tokens from embedded X.509 certs.
+type NodeCountryStep struct{}
+
+// CertReportStep prints certificate validity information for current entities.
+type CertReportStep struct{}
+
+// DiscoJSONStep writes current entities as a SAML discovery JSON feed.
+type DiscoJSONStep struct {
+	Output string `yaml:"output"`
+}
+
+// UnmarshalYAML supports scalar "discojson <path>" and mapping forms.
+func (d *DiscoJSONStep) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		d.Output = node.Value
+		return nil
+	case yaml.MappingNode:
+		type discoAlias DiscoJSONStep
+		var x discoAlias
+		if err := node.Decode(&x); err != nil {
+			return err
+		}
+		*d = DiscoJSONStep(x)
+		return nil
+	default:
+		return fmt.Errorf("invalid discojson argument kind: %d", node.Kind)
+	}
+}
+
 // SortStep configures entity sorting behavior.
 type SortStep struct {
 	OrderBy string `yaml:"order_by"`
+}
+
+// XSLTStep applies an XSLT transformation to the current entity set using xsltproc.
+type XSLTStep struct {
+	Stylesheet string `yaml:"stylesheet"`
+}
+
+// UnmarshalYAML supports:
+// - scalar: stylesheet file path ("xslt transform.xsl")
+// - mapping: structured arguments ({stylesheet: transform.xsl})
+func (x *XSLTStep) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		x.Stylesheet = node.Value
+		return nil
+	case yaml.MappingNode:
+		type xsltAlias XSLTStep
+		var a xsltAlias
+		if err := node.Decode(&a); err != nil {
+			return err
+		}
+		*x = XSLTStep(a)
+		return nil
+	default:
+		return fmt.Errorf("invalid xslt argument kind: %d", node.Kind)
+	}
+}
+
+// ForkStep runs a sub-pipeline on a copy of the current state.
+// Changes to the working set inside the fork do not affect the outer pipeline.
+// Primarily used for side-effect outputs (e.g. publishing a sub-aggregate).
+type ForkStep struct {
+	Pipeline []Step
 }

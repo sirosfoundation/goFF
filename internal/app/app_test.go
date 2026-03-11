@@ -152,6 +152,36 @@ func TestRunBatchSelectPredicateFixtures(t *testing.T) {
 			outputFile:   "pubinfo-values-structured-match.txt",
 			expectedFile: filepath.Join("..", "..", "tests", "fixtures", "expected", "pubinfo-values-structured-match.txt"),
 		},
+		{
+			name:         "setattr roles values list enriches role predicate",
+			pipelineFile: filepath.Join("..", "..", "tests", "fixtures", "pipelines", "setattr-roles.yaml"),
+			outputFile:   "setattr-roles.txt",
+			expectedFile: filepath.Join("..", "..", "tests", "fixtures", "expected", "setattr-roles.txt"),
+		},
+		{
+			name:         "setattr entity category values list enriches category predicate",
+			pipelineFile: filepath.Join("..", "..", "tests", "fixtures", "pipelines", "setattr-values-list.yaml"),
+			outputFile:   "setattr-values-list.txt",
+			expectedFile: filepath.Join("..", "..", "tests", "fixtures", "expected", "setattr-values-list.txt"),
+		},
+		{
+			name:         "reginfo policies list enriches policy match",
+			pipelineFile: filepath.Join("..", "..", "tests", "fixtures", "pipelines", "reginfo-policies.yaml"),
+			outputFile:   "reginfo-policies.txt",
+			expectedFile: filepath.Join("..", "..", "tests", "fixtures", "expected", "reginfo-policies.txt"),
+		},
+		{
+			name:         "select match text filters by entity id substring",
+			pipelineFile: filepath.Join("..", "..", "tests", "fixtures", "pipelines", "select-match-text.yaml"),
+			outputFile:   "select-match-text.txt",
+			expectedFile: filepath.Join("..", "..", "tests", "fixtures", "expected", "select-match-text.txt"),
+		},
+		{
+			name:         "select match text filters by OrganizationDisplayName",
+			pipelineFile: filepath.Join("..", "..", "tests", "fixtures", "pipelines", "select-match-displayname.yaml"),
+			outputFile:   "select-match-displayname.txt",
+			expectedFile: filepath.Join("..", "..", "tests", "fixtures", "expected", "select-match-displayname.txt"),
+		},
 	}
 
 	for _, tc := range tests {
@@ -448,6 +478,59 @@ func TestRunBatchPublishHashAndStoreSideEffects(t *testing.T) {
 	}
 	if string(linkBody) != filepath.Join("store", fmt.Sprintf("%x.txt", h[:]))+"\n" {
 		t.Fatalf("unexpected link file content: %q", string(linkBody))
+	}
+}
+
+func TestRunBatchPublishDirFixture(t *testing.T) {
+	pipelinePath := filepath.Join("..", "..", "tests", "fixtures", "pipelines", "publish-dir-batch.yaml")
+	outDir := t.TempDir()
+
+	err := RunBatch(t.Context(), BatchOptions{PipelinePath: pipelinePath, OutputDir: outDir})
+	if err != nil {
+		t.Fatalf("RunBatch returned error: %v", err)
+	}
+
+	for _, entityID := range []string{"https://idp.example.org/idp", "https://sp.example.org/sp"} {
+		h := sha256.Sum256([]byte(entityID))
+		filename := fmt.Sprintf("%x.xml", h[:])
+		path := filepath.Join(outDir, "entities", filename)
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("expected per-entity file %s for %s: %v", filename, entityID, err)
+		}
+		if !strings.Contains(string(body), entityID) {
+			t.Fatalf("per-entity file for %s does not contain entityID: %s", entityID, string(body))
+		}
+	}
+}
+
+func TestRunBatchDiagnosticSteps(t *testing.T) {
+	tests := []struct {
+		name   string
+		action string
+	}{
+		{name: "stats runs without error", action: "stats"},
+		{name: "info runs without error", action: "info"},
+		{name: "dump runs without error", action: "dump"},
+		{name: "print runs without error", action: "print"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pipeline := fmt.Sprintf(`- load:
+    entities:
+      - https://idp.example.org/idp
+- %s
+`, tc.action)
+			pipelinePath := filepath.Join(t.TempDir(), tc.action+".yaml")
+			if err := os.WriteFile(pipelinePath, []byte(pipeline), 0o600); err != nil {
+				t.Fatalf("failed writing pipeline: %v", err)
+			}
+			err := RunBatch(t.Context(), BatchOptions{PipelinePath: pipelinePath, OutputDir: t.TempDir()})
+			if err != nil {
+				t.Fatalf("RunBatch for %s returned error: %v", tc.action, err)
+			}
+		})
 	}
 }
 

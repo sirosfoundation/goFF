@@ -1,0 +1,7 @@
+- load:
+    files:
+      - ../metadata/select-displayname.xml
+- select:
+    match: example university
+- publish:
+    output: select-match-displayname.txt

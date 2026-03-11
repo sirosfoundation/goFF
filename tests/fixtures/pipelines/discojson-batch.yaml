@@ -1,0 +1,5 @@
+- load:
+    files:
+      - ../metadata/p2-enrichment.xml
+- discojson:
+    output: disco.json

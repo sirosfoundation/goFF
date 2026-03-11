@@ -1,0 +1,8 @@
+- load:
+    files:
+      - ../metadata/p2-enrichment.xml
+- nodecountry
+- select:
+    match: country:se
+- publish:
+    output: nodecountry-select.txt

@@ -1,0 +1,13 @@
+- load:
+    entities:
+      - https://idp.example.org/idp
+      - https://sp.example.org/sp
+- reginfo:
+    authority: https://example.org/authority
+    policies:
+      - https://example.org/policy/a
+      - https://example.org/policy/b
+- select:
+    match: policy:https://example.org/policy/b
+- publish:
+    output: reginfo-policies.txt

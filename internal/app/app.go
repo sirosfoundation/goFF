@@ -19,6 +19,7 @@ import (
 type BatchOptions struct {
 	PipelinePath string
 	OutputDir    string
+	Verbose      bool
 }
 
 // ServerOptions holds command-line options for server execution.
@@ -27,6 +28,17 @@ type ServerOptions struct {
 	ListenAddr   string
 	OutputDir    string
 	RefreshEvery time.Duration
+	// BaseURL is the externally-visible base URL (e.g. "https://mdq.example.org").
+	// Used to derive @Name on aggregate responses.  When empty, the value is
+	// auto-detected from X-Forwarded-Proto / X-Forwarded-Host / Host headers.
+	BaseURL string
+	// CacheDuration is an ISO 8601 duration (e.g. "PT48H") set as
+	// @cacheDuration on aggregate XML responses and as Cache-Control max-age.
+	CacheDuration string
+	// ValidUntil is an RFC 3339 timestamp or a "+<go-duration>" offset
+	// (e.g. "+48h") set as @validUntil on aggregate XML responses and as
+	// the Expires header.
+	ValidUntil string
 }
 
 type serverRuntimeMetrics struct {
@@ -36,7 +48,7 @@ type serverRuntimeMetrics struct {
 	lastRefreshUnix     atomic.Int64
 }
 
-// RunBatch validates input and executes a placeholder batch workflow.
+// RunBatch validates input, parses the pipeline, and executes it in batch mode.
 func RunBatch(_ context.Context, opts BatchOptions) error {
 	if opts.PipelinePath == "" {
 		return fmt.Errorf("%w: --pipeline is required", ErrInvalidInput)
@@ -47,7 +59,14 @@ func RunBatch(_ context.Context, opts BatchOptions) error {
 		return fmt.Errorf("%w: %v", ErrPipelineParse, err)
 	}
 
-	res, err := pipeline.Execute(p, opts.OutputDir)
+	var execOpts pipeline.ExecuteOptions
+	if opts.Verbose {
+		execOpts.Progress = func(step int, action, msg string) {
+			fmt.Printf("[step %d] %s: %s\n", step, action, msg)
+		}
+	}
+
+	res, err := pipeline.Execute(p, opts.OutputDir, execOpts)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrPipelineExecute, err)
 	}
@@ -88,6 +107,11 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	h := mdq.NewHandler(
 		r,
 		mdq.WithReadiness(func() bool { return metrics.ready.Load() }),
+		mdq.WithBaseURL(opts.BaseURL),
+		mdq.WithAggregateConfig(pipeline.AggregateConfig{
+			CacheDuration: opts.CacheDuration,
+			ValidUntil:    opts.ValidUntil,
+		}),
 		mdq.WithExtraMetrics(func() map[string]any {
 			return map[string]any{
 				"server": map[string]any{

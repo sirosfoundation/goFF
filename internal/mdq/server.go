@@ -7,7 +7,9 @@ import (
 	"net/url"
 	"strings"
 	"sync/atomic"
+	"time"
 
+	"github.com/sirosfoundation/goff/internal/pipeline"
 	"github.com/sirosfoundation/goff/internal/repo"
 )
 
@@ -15,6 +17,11 @@ type handlerConfig struct {
 	isReady         func() bool
 	extraMetrics    func() map[string]any
 	requestCounters *RequestCounters
+	aggregateCfg    pipeline.AggregateConfig
+	// baseURL is the externally-visible base URL of this server, used to
+	// derive @Name on the EntitiesDescriptor for aggregate responses.
+	// If empty the value is detected from X-Forwarded-* / Host headers.
+	baseURL string
 }
 
 // HandlerOption customizes MDQ handler behavior.
@@ -27,6 +34,7 @@ type RequestCounters struct {
 	ReadyzRequests        atomic.Uint64
 	MetricsRequests       atomic.Uint64
 	EntitiesListRequests  atomic.Uint64
+	EntityListNotAccept   atomic.Uint64
 	EntityLookupRequests  atomic.Uint64
 	EntityLookupNotFound  atomic.Uint64
 	EntityLookupBadInput  atomic.Uint64
@@ -51,6 +59,27 @@ func WithExtraMetrics(fn func() map[string]any) HandlerOption {
 func WithRequestCounters(c *RequestCounters) HandlerOption {
 	return func(cfg *handlerConfig) {
 		cfg.requestCounters = c
+	}
+}
+
+// WithAggregateConfig sets the SAML aggregate metadata attributes
+// (Name, CacheDuration, ValidUntil) applied to XML responses.
+// The @Name is overridden per-request by the base URL if one is configured
+// or can be detected from proxy headers.
+func WithAggregateConfig(ac pipeline.AggregateConfig) HandlerOption {
+	return func(cfg *handlerConfig) {
+		cfg.aggregateCfg = ac
+	}
+}
+
+// WithBaseURL sets the externally-visible base URL of this server
+// (e.g. "https://mdq.example.org").  The @Name attribute on the
+// /entities aggregate response is derived as baseURL+"/entities".
+// If empty, the value is auto-detected from X-Forwarded-Proto / X-Forwarded-Host
+// / Host request headers.
+func WithBaseURL(u string) HandlerOption {
+	return func(cfg *handlerConfig) {
+		cfg.baseURL = strings.TrimRight(u, "/")
 	}
 }
 
@@ -100,6 +129,7 @@ func NewHandler(r *repo.Repository, opts ...HandlerOption) http.Handler {
 				"entity_lookup_404":   cfg.requestCounters.EntityLookupNotFound.Load(),
 				"entity_lookup_400":   cfg.requestCounters.EntityLookupBadInput.Load(),
 				"entity_lookup_406":   cfg.requestCounters.EntityLookupNotAccept.Load(),
+						"entity_list_406":     cfg.requestCounters.EntityListNotAccept.Load(),
 			},
 		}
 
@@ -114,16 +144,31 @@ func NewHandler(r *repo.Repository, opts ...HandlerOption) http.Handler {
 	mux.HandleFunc("/entities", func(w http.ResponseWriter, req *http.Request) {
 		cfg.requestCounters.RequestsTotal.Add(1)
 		cfg.requestCounters.EntitiesListRequests.Add(1)
-		accept := strings.ToLower(req.Header.Get("Accept"))
-		if strings.Contains(accept, "application/samlmetadata+xml") ||
-			strings.Contains(accept, "application/xml") ||
-			strings.Contains(accept, "text/xml") {
+		// Resolve format; default to JSON when no Accept header is provided
+		// (preserves backward-compatible behaviour for clients that do not
+		// set Accept).  Return 406 for an explicit but unsupported type.
+		format := resolveListFormat(req.Header.Get("Accept"))
+		switch format {
+		case "xml":
+			ac := cfg.aggregateCfg
+			ac.Name = resolveAggregateName(cfg, req)
+			setCacheHeaders(w, ac)
 			w.Header().Set("Content-Type", "application/samlmetadata+xml")
-			_, _ = w.Write([]byte(renderEntitiesXML(r.List(), r)))
-			return
+			ids := r.List()
+			bodies := make(map[string]string, len(ids))
+			for _, id := range ids {
+				if body, ok := r.Get(id); ok {
+					bodies[id] = body
+				}
+			}
+			_, _ = w.Write(pipeline.BuildEntitiesXML(ids, bodies, ac))
+		case "json":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string][]string{"entities": r.List()})
+		default:
+			cfg.requestCounters.EntityListNotAccept.Add(1)
+			http.Error(w, "not acceptable", http.StatusNotAcceptable)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string][]string{"entities": r.List()})
 	})
 
 	mux.HandleFunc("/entities/", func(w http.ResponseWriter, req *http.Request) {
@@ -158,6 +203,7 @@ func NewHandler(r *repo.Repository, opts ...HandlerOption) http.Handler {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"entityID": entityID})
 		case "xml":
+			setCacheHeaders(w, cfg.aggregateCfg)
 			w.Header().Set("Content-Type", "application/samlmetadata+xml")
 			if body, ok := r.Get(entityID); ok {
 				_, _ = w.Write([]byte(body))
@@ -203,32 +249,72 @@ func resolveFormat(accept string, fromExt string) string {
 	return ""
 }
 
+// resolveListFormat resolves the response format for the /entities aggregate
+// list endpoint.  When no Accept header is present the default is JSON
+// (backward-compatible).  An explicit but unsupported type returns "".
+func resolveListFormat(accept string) string {
+	a := strings.ToLower(accept)
+	if a == "" || strings.Contains(a, "*/*") || strings.Contains(a, "application/*") || strings.Contains(a, "text/*") {
+		return "json"
+	}
+	if strings.Contains(a, "application/json") {
+		return "json"
+	}
+	if strings.Contains(a, "application/samlmetadata+xml") || strings.Contains(a, "application/xml") || strings.Contains(a, "text/xml") {
+		return "xml"
+	}
+	return ""
+}
+
 func renderEntityXML(entityID string) string {
 	return fmt.Sprintf("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<md:EntityDescriptor xmlns:md=\"urn:oasis:names:tc:SAML:2.0:metadata\" entityID=\"%s\"></md:EntityDescriptor>\n", entityID)
+}
+
+// resolveAggregateName returns the @Name value for the /entities aggregate
+// response.  Priority: explicit baseURL config → X-Forwarded-* headers → Host.
+func resolveAggregateName(cfg *handlerConfig, req *http.Request) string {
+	if cfg.baseURL != "" {
+		return cfg.baseURL + "/entities"
+	}
+	proto := req.Header.Get("X-Forwarded-Proto")
+	host := req.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = req.Host
+	}
+	if proto == "" {
+		if req.TLS != nil {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
+	}
+	if host != "" {
+		prefix := strings.TrimRight(req.Header.Get("X-Forwarded-Prefix"), "/")
+		return proto + "://" + host + prefix + "/entities"
+	}
+	return cfg.aggregateCfg.Name
+}
+
+// setCacheHeaders writes Cache-Control and Expires headers derived from
+// the AggregateConfig CacheDuration and ValidUntil fields.
+func setCacheHeaders(w http.ResponseWriter, ac pipeline.AggregateConfig) {
+	validUntil := pipeline.ResolveValidUntil(ac.ValidUntil)
+	if validUntil != "" {
+		if t, err := time.Parse(time.RFC3339, validUntil); err == nil {
+			w.Header().Set("Expires", t.UTC().Format(http.TimeFormat))
+			if maxAge := int(time.Until(t).Seconds()); maxAge > 0 {
+				w.Header().Set("Cache-Control", fmt.Sprintf("max-age=%d", maxAge))
+			}
+		}
+	}
+	if ac.CacheDuration != "" && w.Header().Get("Cache-Control") == "" {
+		if secs, ok := pipeline.ParseCacheDurationSeconds(ac.CacheDuration); ok {
+			w.Header().Set("Cache-Control", fmt.Sprintf("max-age=%d", secs))
+		}
+	}
 }
 
 type xmlGetter interface {
 	List() []string
 	Get(entityID string) (string, bool)
-}
-
-func renderEntitiesXML(ids []string, r xmlGetter) string {
-	var sb strings.Builder
-	sb.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
-	sb.WriteString("<md:EntitiesDescriptor xmlns:md=\"urn:oasis:names:tc:SAML:2.0:metadata\">\n")
-	for _, id := range ids {
-		if body, ok := r.Get(id); ok {
-			// strip XML declaration if present so it embeds cleanly
-			body = strings.TrimPrefix(body, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
-			body = strings.TrimPrefix(body, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
-			sb.WriteString(body)
-			if !strings.HasSuffix(strings.TrimSpace(body), "\n") {
-				sb.WriteByte('\n')
-			}
-		} else {
-			sb.WriteString(fmt.Sprintf("  <md:EntityDescriptor entityID=\"%s\"></md:EntityDescriptor>\n", id))
-		}
-	}
-	sb.WriteString("</md:EntitiesDescriptor>\n")
-	return sb.String()
 }

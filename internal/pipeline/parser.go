@@ -136,6 +136,18 @@ func (s *Step) UnmarshalYAML(node *yaml.Node) error {
 				return err
 			}
 		}
+		if s.Action == "discojson" || s.Action == "discojson_sp" || s.Action == "discojson_idp" {
+			parts := strings.Fields(rawAction)
+			if len(parts) >= 2 {
+				s.DiscoJSON.Output = strings.Join(parts[1:], " ")
+			}
+		}
+		if s.Action == "xslt" {
+			parts := strings.Fields(rawAction)
+			if len(parts) >= 2 {
+				s.XSLT.Stylesheet = strings.Join(parts[1:], " ")
+			}
+		}
 		return nil
 	case yaml.MappingNode:
 		if len(node.Content) != 2 {
@@ -213,6 +225,25 @@ func (s *Step) UnmarshalYAML(node *yaml.Node) error {
 			}
 		case "stats":
 			// no payload
+		case "nodecountry", "certreport":
+			// no payload
+		case "discojson", "discojson_sp", "discojson_idp":
+			if err := valueNode.Decode(&s.DiscoJSON); err != nil {
+				return err
+			}
+		case "xslt":
+			if err := valueNode.Decode(&s.XSLT); err != nil {
+				return err
+			}
+		case "fork", "pipe", "parsecopy":
+			if valueNode.Kind != yaml.SequenceNode {
+				return fmt.Errorf("fork value must be a sequence of steps")
+			}
+			subSteps, err := parsePipelineSequence(valueNode)
+			if err != nil {
+				return fmt.Errorf("parse fork sub-pipeline: %w", err)
+			}
+			s.Fork.Pipeline = subSteps
 		default:
 			// unknown action payload ignored here; validation handles unsupported actions
 		}
@@ -345,11 +376,14 @@ func validateAction(action string) error {
 		"setattr", "reginfo", "pubinfo",
 		"stats", "info", "dump", "print",
 		"first",
+		"nodecountry", "certreport",
+		"discojson", "discojson_sp", "discojson_idp",
+		"xslt",
+		"fork", "pipe", "parsecopy",
 		"break", "end":
 		return nil
-	case "xslt", "nodecountry", "certreport", "signcerts",
-		"discojson", "discojson_sp", "discojson_idp",
-		"fork", "pipe", "merge", "parsecopy",
+	case "signcerts",
+		"merge",
 		"emit":
 		return fmt.Errorf("action %q is known but not supported in goFF update pipelines", action)
 	default:

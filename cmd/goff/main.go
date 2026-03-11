@@ -38,9 +38,10 @@ func main() {
 		batchFlags := flag.NewFlagSet("batch", flag.ExitOnError)
 		pipeline := batchFlags.String("pipeline", "", "Path to pipeline YAML")
 		output := batchFlags.String("output", "./out", "Output directory")
-		_ = batchFlags.Parse(os.Args[2:])
+			verbose := batchFlags.Bool("verbose", false, "Print per-step progress")
+			_ = batchFlags.Parse(os.Args[2:])
 
-		err := app.RunBatch(ctx, app.BatchOptions{PipelinePath: *pipeline, OutputDir: *output})
+			err := app.RunBatch(ctx, app.BatchOptions{PipelinePath: *pipeline, OutputDir: *output, Verbose: *verbose})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "batch error: %v\n", err)
 			os.Exit(exitCodeForError(err))
@@ -51,9 +52,20 @@ func main() {
 		listen := serverFlags.String("listen", ":8080", "HTTP listen address")
 		output := serverFlags.String("output", "", "Pipeline output directory used during refresh runs (optional)")
 		refreshEvery := serverFlags.Duration("refresh-interval", 5*time.Minute, "Pipeline refresh interval (0 disables refresh loop)")
-		_ = serverFlags.Parse(os.Args[2:])
+			baseURL := serverFlags.String("base-url", "", "Externally-visible base URL (e.g. https://mdq.example.org); auto-detected from proxy headers when empty")
+			cacheDuration := serverFlags.String("cache-duration", "", "ISO 8601 cache duration applied to XML responses (e.g. PT48H)")
+			validUntil := serverFlags.String("valid-until", "", "RFC 3339 timestamp or +<duration> offset for validUntil (e.g. +48h)")
+			_ = serverFlags.Parse(os.Args[2:])
 
-		err := app.RunServer(ctx, app.ServerOptions{PipelinePath: *pipeline, ListenAddr: *listen, OutputDir: *output, RefreshEvery: *refreshEvery})
+			err := app.RunServer(ctx, app.ServerOptions{
+				PipelinePath:  *pipeline,
+				ListenAddr:    *listen,
+				OutputDir:     *output,
+				RefreshEvery:  *refreshEvery,
+				BaseURL:       *baseURL,
+				CacheDuration: *cacheDuration,
+				ValidUntil:    *validUntil,
+			})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 			os.Exit(exitCodeForError(err))

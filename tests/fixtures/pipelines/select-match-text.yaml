@@ -1,0 +1,7 @@
+- load:
+    files:
+      - ../metadata/select-predicates.xml
+- select:
+    match: idp.example
+- publish:
+    output: select-match-text.txt

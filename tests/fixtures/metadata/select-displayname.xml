@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata">
+  <md:EntityDescriptor entityID="https://idp.example.org/idp">
+    <md:IDPSSODescriptor/>
+    <md:Organization>
+      <md:OrganizationName xml:lang="en">Example University</md:OrganizationName>
+      <md:OrganizationDisplayName xml:lang="en">Example University</md:OrganizationDisplayName>
+      <md:OrganizationURL xml:lang="en">https://www.example.org/</md:OrganizationURL>
+    </md:Organization>
+  </md:EntityDescriptor>
+  <md:EntityDescriptor entityID="https://sp.example.org/sp">
+    <md:SPSSODescriptor/>
+    <md:Organization>
+      <md:OrganizationName xml:lang="en">Test Institute</md:OrganizationName>
+      <md:OrganizationDisplayName xml:lang="en">Test Institute</md:OrganizationDisplayName>
+      <md:OrganizationURL xml:lang="en">https://test.example.org/</md:OrganizationURL>
+    </md:Organization>
+  </md:EntityDescriptor>
+</md:EntitiesDescriptor>

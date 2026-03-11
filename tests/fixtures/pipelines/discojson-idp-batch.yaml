@@ -1,0 +1,4 @@
+- load:
+    files:
+      - ../metadata/p2-enrichment.xml
+- discojson_idp disco-idp.json

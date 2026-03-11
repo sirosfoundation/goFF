@@ -1,0 +1,13 @@
+- load:
+    entities:
+      - https://idp.example.org/idp
+      - https://sp.example.org/sp
+- setattr:
+    name: entity_category
+    values:
+      - https://refeds.org/category/research-and-scholarship
+      - https://example.org/category/other
+- select:
+    entity_category: https://example.org/category/other
+- publish:
+    output: setattr-values-list.txt

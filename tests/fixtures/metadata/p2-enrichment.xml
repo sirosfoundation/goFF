@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
+                       xmlns:mdui="urn:oasis:names:tc:SAML:metadata:ui">
+  <md:EntityDescriptor entityID="https://idp.example.org/idp">
+    <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+      <md:Extensions>
+        <mdui:UIInfo>
+          <mdui:DisplayName xml:lang="en">Example University IdP</mdui:DisplayName>
+          <mdui:Description xml:lang="en">IdP for Example University</mdui:Description>
+          <mdui:Keywords xml:lang="en">university example research</mdui:Keywords>
+          <mdui:Logo width="80" height="60">https://www.example.org/logo.png</mdui:Logo>
+          <mdui:PrivacyStatementURL xml:lang="en">https://www.example.org/privacy</mdui:PrivacyStatementURL>
+        </mdui:UIInfo>
+      </md:Extensions>
+      <md:KeyDescriptor use="signing">
+        <ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+          <ds:X509Data>
+            <ds:X509Certificate>MIIDaTCCAlGgAwIBAgIUCDfWbedz7R0FAbzNi7uKwIozvVAwDQYJKoZIhvcNAQEL
+            BQAwRDELMAkGA1UEBhMCU0UxGzAZBgNVBAoMEkV4YW1wbGUgVW5pdmVyc2l0eTEY
+            MBYGA1UEAwwPaWRwLmV4YW1wbGUub3JnMB4XDTI2MDMxMTE4MDE0MloXDTM2MDMw
+            ODE4MDE0MlowRDELMAkGA1UEBhMCU0UxGzAZBgNVBAoMEkV4YW1wbGUgVW5pdmVy
+            c2l0eTEYMBYGA1UEAwwPaWRwLmV4YW1wbGUub3JnMIIBIjANBgkqhkiG9w0BAQEF
+            AAOCAQ8AMIIBCgKCAQEAylYtZ2qa5pueYc4Yr8rNSvHMOBF1+9o/9h6c9wCkfR1l
+            FuKt0nkXmSE7Mu1vIHsA3Y03jFN2O+mD04YQjKdE9/OKD7SYiTipiTxBN+m+rTC1
+            MIwI/VHpjauVKCGAmHK97wQqjyC3f3XN8ziu99o4KaCmtuoAwC2xK0k1p3MqcclR
+            eKIiaIbfdNfA2c+DSRZkGTBHQr0P06cIB9IyCOB8GRPO/FYMZztXoGaiSvJvcjVy
+            uO2QzWA8fte5kwjPaO7FolrBBndNJJ2QC8BTccTejim1wN7ZtZQrUeMwn80jV1aV
+            VBV9jpRYVvhlJW6yfBDISKcqXcNAImyp+U43Yz8N0wIDAQABo1MwUTAdBgNVHQ4E
+            FgQUTIY9EsIUTJgVC0haotWdtlTi+vgwHwYDVR0jBBgwFoAUTIY9EsIUTJgVC0ha
+            otWdtlTi+vgwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAeVEO
+            HtBH/+lfx3Tf+ItFfTc8td4i8sb3nO/6iSEE2+EPVvvX+nyRcyahJVXqNJaXbUa6
+            u7A45HcjzXOFbsoCypJK02AcS4sEtU8otujpn8SdJJCMo/twHGuhx1ZI8CCBOAYq
+            4tCjVqk0LWwz2j7gxuC50JhzdyuaoVkoAlEg9pKvr1mUXT2/yYSq7tkSegwNI32U
+            Ik9l8hWwgq1MpgcVDUOOOyEjyAkn3/0r5VN/X22ljTXa8Lr0+7Xpie2czrl/ra/B
+            xVQ+hJm8acfNRZcYAshHS51YsiLJOsu8LdlM/VTAoWIPQbWaom2qhAeIzCQGS9ag
+            WPrUbun7NmEkyWIDVg==</ds:X509Certificate>
+          </ds:X509Data>
+        </ds:KeyInfo>
+      </md:KeyDescriptor>
+    </md:IDPSSODescriptor>
+    <md:Organization>
+      <md:OrganizationName xml:lang="en">Example University</md:OrganizationName>
+      <md:OrganizationDisplayName xml:lang="en">Example University</md:OrganizationDisplayName>
+      <md:OrganizationURL xml:lang="en">https://www.example.org/</md:OrganizationURL>
+    </md:Organization>
+  </md:EntityDescriptor>
+  <md:EntityDescriptor entityID="https://sp.example.org/sp">
+    <md:SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+      <md:Extensions>
+        <mdui:UIInfo>
+          <mdui:DisplayName xml:lang="en">Test Institute SP</mdui:DisplayName>
+          <mdui:DisplayName xml:lang="de">Test Institut SP</mdui:DisplayName>
+          <mdui:Description xml:lang="en">Service provider for Test Institute</mdui:Description>
+          <mdui:Keywords xml:lang="en">test institute sp</mdui:Keywords>
+          <mdui:Logo width="120" height="40">https://test.example.org/logo.png</mdui:Logo>
+          <mdui:InformationURL xml:lang="en">https://test.example.org/info</mdui:InformationURL>
+          <mdui:GeolocationHint>geo:52.5,13.4</mdui:GeolocationHint>
+        </mdui:UIInfo>
+      </md:Extensions>
+      <md:KeyDescriptor use="signing">
+        <ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+          <ds:X509Data>
+            <ds:X509Certificate>MIIDXzCCAkegAwIBAgIURak7YYjYSwM2I37NpzgfekUB0h0wDQYJKoZIhvcNAQEL
+            BQAwPzELMAkGA1UEBhMCREUxFzAVBgNVBAoMDlRlc3QgSW5zdGl0dXRlMRcwFQYD
+            VQQDDA5zcC5leGFtcGxlLm9yZzAeFw0yNjAzMTExNzM4MTRaFw0zNjAzMDgxNzM4
+            MTRaMD8xCzAJBgNVBAYTAkRFMRcwFQYDVQQKDA5UZXN0IEluc3RpdHV0ZTEXMBUG
+            A1UEAwwOc3AuZXhhbXBsZS5vcmcwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK
+            AoIBAQDMC1yTpPY1e/ScjkuUf3E5BW4YgZq09YfDwISHWvAnvNZs0fZcw6SWca14
+            fL9nINpSjNDtoFW2tfbzNdRl+mhNlMJ3mdD1zHSTgpH/Hj0iGJ9urr1n2YZJJtnE
+            nZ/57ScxZMF73muhJob9+L7kBmc2XVgk7RMIq9nvdUqoSloW5B0Yo+W8OmlXJj+I
+            QHgPIJAKRpziNVfojkM3nbZYoKDjI9IjEcOj6EBeSOcoLQsn9b5OHUqB+srY7VVw
+            md5ZBmlfsFNc968Q/1bHcEEizDhCel4R8YZk3hputLAGnL545Ad8FjXMuMG5c8GS
+            XKDPzneFcXWZHaZEZzQlN2nrbD3jAgMBAAGjUzBRMB0GA1UdDgQWBBTgh/8BY4X+
+            U8Hhvtx7XfFarqg0sjAfBgNVHSMEGDAWgBTgh/8BY4X+U8Hhvtx7XfFarqg0sjAP
+            BgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQDJZvg+5r8EoBe+fnEP
+            Ww2mn4QTjpaWHxGbtyU1mfISvMqDAEggRoLfy0zjpzrNq9KOYkaTVRmjkLXnGd8j
+            Imursge7tL8SJQBSGMQmhGhALWMeEPILl2j3dNIbju/9ZyKvN1Sd0//GsfY3OgIE
+            Zni2ro3/4PcKIFSGcRcdZpV34FbulTr5z0YqAuLdvLK/NxdHFYWfz7rf+q2Fm0TM
+            SfkXR8NGg6+YDPMXbmfEFuYqrrArgI0/vIF7vsNqhCO1HYxdawreUQba3g4kd9BI
+            5KIcV5WdEFm4cMoVlXLxgRVJXA4mcf8/wHD+7wp/0T2d7jKlreCe7cnYNLMwi41v
+            78/W</ds:X509Certificate>
+          </ds:X509Data>
+        </ds:KeyInfo>
+      </md:KeyDescriptor>
+      <md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+                                   Location="https://sp.example.org/acs" index="1"/>
+    </md:SPSSODescriptor>
+    <md:Organization>
+      <md:OrganizationName xml:lang="en">Test Institute</md:OrganizationName>
+      <md:OrganizationDisplayName xml:lang="en">Test Institute</md:OrganizationDisplayName>
+      <md:OrganizationURL xml:lang="en">https://test.example.org/</md:OrganizationURL>
+    </md:Organization>
+  </md:EntityDescriptor>
+</md:EntitiesDescriptor>

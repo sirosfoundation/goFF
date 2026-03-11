@@ -1,0 +1,6 @@
+- load:
+    files:
+      - ../metadata/p2-enrichment.xml
+- nodecountry
+- publish:
+    output: nodecountry-enriched.txt

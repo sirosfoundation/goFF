@@ -503,6 +503,37 @@ func TestExecutePublishHashAndStoreWritesLinkPointer(t *testing.T) {
 	}
 }
 
+func TestExecutePublishDirWritesPerEntityFiles(t *testing.T) {
+	p := File{
+		Pipeline: []Step{
+			{Action: "load", Load: LoadStep{Entities: []string{
+				"https://idp.example.org/idp",
+				"https://sp.example.org/sp",
+			}}},
+			{Action: "publish", Publish: PublishStep{Dir: "entities"}},
+		},
+	}
+
+	outDir := t.TempDir()
+	_, err := Execute(p, outDir)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	for _, entityID := range []string{"https://idp.example.org/idp", "https://sp.example.org/sp"} {
+		h := sha256.Sum256([]byte(entityID))
+		filename := fmt.Sprintf("%x.xml", h[:])
+		path := filepath.Join(outDir, "entities", filename)
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("expected per-entity file %s for %s: %v", filename, entityID, err)
+		}
+		if !strings.Contains(string(body), entityID) {
+			t.Fatalf("per-entity file for %s does not contain entityID, got: %s", entityID, string(body))
+		}
+	}
+}
+
 func TestExecuteSetAttrStructuredMatchPrefix(t *testing.T) {
 	p := File{
 		Pipeline: []Step{
