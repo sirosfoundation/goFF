@@ -11,8 +11,8 @@ This document tracks pyFF pipeline feature compatibility in `goFF`.
 ## Pipeline Actions
 | Action | Status | Notes |
 | --- | --- | --- |
-| `load` | partial | Named source loading, pyFF-style list arguments, and source-backed metadata loading from `files` and `urls` are implemented; loaded entity IDs are validated, deduplicated, and sorted deterministically; source options `verify`, `cleanup`, `timeout`, and `retries` are supported; deprecated aliases `local`, `remote`, and `_fetch` map to `load` |
-| `select` | partial | Explicit entity ID filtering is implemented; pyFF-style selector expressions (`!//md:EntityDescriptor[...]`) are supported with repository-scoped XPath (`source!xpath`, including `as` aliases) and selector intersections (`selector+selector`); options `as` (synthetic alias for later `load.source`) and `dedup` are supported; pyFF-like `match` query behavior is partially supported for case-insensitive text tokens and IP hint network matching; predicates are supported for `role`/`roles`, `entity_category`/`entity_categories`, and `registration_authority` (with `match: any|all` for role/category lists) for metadata loaded from files/urls |
+| `load` | partial | Flat `files`, `urls`, and `entities` lists on the `load` step are supported; loaded entity IDs are validated, deduplicated, and sorted deterministically; source options `verify`, `cleanup`, `timeout`, and `retries` are supported; `via` source intersection is supported; deprecated aliases `local`, `remote`, and `_fetch` map to `load`; in-pipeline aliases created by `select as /name:` are resolved from the step map when referenced via `files: [/name]` |
+| `select` | partial | Explicit entity ID filtering is implemented; pyFF-style selector expressions (`!//md:EntityDescriptor[...]`) are supported with repository-scoped XPath (`/alias!xpath` pattern using in-pipeline aliases) and selector intersections (`selector+selector`); option `as /name` creates an in-pipeline alias reloadable by later `load: files: [/name]`; `dedup` is supported; pyFF-like `match` query behavior is partially supported for case-insensitive text tokens and IP hint network matching; predicates are supported for `role`/`roles`, `entity_category`/`entity_categories`, and `registration_authority` (with `match: any|all` for role/category lists) for metadata loaded from files/urls |
 | `filter` | supported | Implemented as current-working-set constrained selection with fixture coverage (`filter-current-only.yaml`) |
 | `pick` | supported | Implemented as repository-scoped selection with fixture coverage (`pick-repository.yaml`) |
 | `first` | supported | Supported for single-entity XML publish behavior with fixture coverage (`first-single-entity.yaml`) |
@@ -37,8 +37,8 @@ Request-only primitives (for request pipeline branches) are intentionally de-pri
 - `publish` directory/hash-link/store-updates: pyFF supports rich output routing semantics (`output as resource`, directory writes, symlink/hash link management, update_store side effects) that require a repository-backed publishing model.
 - `fork`/`pipe` flow control (`merge`, `parsecopy`, `break`, nested branch state): exact execution parity requires full pyFF request/state machine semantics.
 - `emit` and request-oriented content negotiation pipelines: goFF intentionally separates request handling from update pipelines.
-- `load` advanced resource options (`via`, threaded fetch policy callbacks): full pyFF callback-graph parity still requires a pyFF-equivalent resource manager.
-- Certificate/report pipes (`certreport`, `signcerts`) and transformation helpers (`discojson*`, `reginfo`, `pubinfo`, `setattr`, `nodecountry`) need full XML tree mutation/reporting parity and equivalent extension handling.
+- `load` advanced resource options (threaded fetch policy callbacks): full pyFF callback-graph parity still requires a pyFF-equivalent resource manager.
+- Certificate/report pipes (`certreport`, `signcerts`) and transformation/export helpers (`discojson*`, `nodecountry`) need full XML tree mutation/reporting parity and equivalent extension handling.
 
 Migration compatibility:
 - Top-level pyFF wrappers `when update` and `when x` are accepted for update-scope migration and flattened during parsing.
@@ -75,6 +75,8 @@ Migration compatibility:
 - `internal/pipeline/metadata_load_test.go:TestLoadSourceDataCleanupSkipsBrokenFile` validates source cleanup behavior (`cleanup: true`) by skipping broken source files while still ingesting valid sources.
 - `internal/pipeline/parser_test.go:TestParseFileSupportsWhenUpdateWrapper` and `internal/pipeline/parser_test.go:TestParseFileSkipsNonUpdateWhenBranches` validate pyFF `when` wrapper parsing behavior for update scope.
 - `internal/pipeline/engine_test.go:TestExecuteLoadViaIntersectsWithViaSource` validates `load.via` source intersection behavior.
+- `internal/pipeline/engine_test.go:TestExecuteSelectByCurlyAttributeSyntax` and `TestExecuteSelectByRemoteSelectorList` validate `select` predicate forms with flat `load: files:` sources.
+- `internal/pipeline/parser_test.go:TestParseFile` validates that the top-level YAML is parsed as a flat sequence (no `sources:`/`pipeline:` wrapper required).
 - `internal/app/app_test.go:TestRunBatchWhenWrapperFixtures` plus fixtures `tests/fixtures/pipelines/when-update-batch.yaml` and `tests/fixtures/pipelines/when-x-batch.yaml` validate end-to-end batch execution of `when update` and `when x` wrappers (with request/accept branches ignored).
 - `internal/pipeline/parser_test.go:TestParseFilePublishInlineOutput` and `internal/pipeline/parser_test.go:TestParseFilePublishAsActionOption` validate inline publish syntax parsing.
 - `internal/pipeline/engine_test.go:TestExecutePublishCreatesNestedDirectories` validates nested output-path publishing.
@@ -104,7 +106,8 @@ Migration compatibility:
 
 ## Sprint C Tracking
 - [x] Add Sprint C plan section in implementation plan with triaged-pipe source of truth (`docs/pyff-pipe-triage.md`)
-- [x] Implement first `load` advanced option subset: source signature verification via `sources[].verify`
+- [x] Implement first `load` advanced option subset: source signature verification via `verify`
 - [x] Implement prioritized `load` advanced option subset (`verify`, `via`, `cleanup`, and fetch policy subset via `timeout`/`retries`)
+- [x] Remove goFF-specific `sources:` map and `pipeline:` wrapper — top-level YAML is now the pipeline itself (pyFF-compatible flat sequence format); `LoadStep.Files`/`URLs`/`Entities` replace the named-source indirection
 - [ ] Close remaining P0 `partial` pipes toward `supported` with fixture-backed parity evidence (`publish`, `sign`, `verify`)
 - [x] Start P1 transformation/enrichment track (`setattr`, `reginfo`, `pubinfo`) with parity fixtures

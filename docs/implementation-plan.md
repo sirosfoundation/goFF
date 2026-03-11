@@ -202,6 +202,7 @@ Sprint C progress note:
 - `publish` shorthand parity now includes inline `publish output as <path>` parsing and fixture-backed batch execution.
 - `sign`/`verify` publish semantics now fail fast when configured against non-XML publish outputs, preventing silent no-op behavior on text artifacts.
 - `pubinfo` structured match parity now includes `values` list projection into `value:<value>` query tokens, validated by batch fixtures.
+- goFF-specific `sources:` map and `pipeline:` wrapper key removed entirely; the top-level YAML document is now the pipeline itself — a bare sequence of steps matching the native pyFF format. `LoadStep.Files`/`URLs`/`Entities` replace the named-source indirection. In-pipeline aliases (`select as /name:`) allow cross-step references via `load: files: [/name]`. All 40+ fixture YAML files and all test files updated; `ParseFile` now rejects non-sequence top-level YAML with an explicit error.
 
 ## Near-Term Acceptance Criteria
 - New parity fixtures demonstrate behavior coverage for every `partial` action that has an implemented path.
