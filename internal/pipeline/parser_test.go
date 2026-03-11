@@ -512,3 +512,37 @@ func TestParseFileRejectsInvalidSortArgumentKind(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestParseFileRejectsKnownUnsupportedAction(t *testing.T) {
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "pipeline.yaml")
+	yaml := "pipeline:\n  - load\n  - xslt:\n      stylesheet: foo.xsl\n"
+	if err := os.WriteFile(fixture, []byte(yaml), 0o600); err != nil {
+		t.Fatalf("failed writing fixture: %v", err)
+	}
+
+	_, err := ParseFile(fixture)
+	if err == nil {
+		t.Fatal("expected ParseFile error for unsupported action xslt")
+	}
+	if !strings.Contains(err.Error(), "xslt") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseFileRejectsUnknownAction(t *testing.T) {
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "pipeline.yaml")
+	yaml := "pipeline:\n  - load\n  - totally_made_up_action\n"
+	if err := os.WriteFile(fixture, []byte(yaml), 0o600); err != nil {
+		t.Fatalf("failed writing fixture: %v", err)
+	}
+
+	_, err := ParseFile(fixture)
+	if err == nil {
+		t.Fatal("expected ParseFile error for unknown action")
+	}
+	if !strings.Contains(err.Error(), "totally_made_up_action") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

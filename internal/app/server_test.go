@@ -222,9 +222,13 @@ pipeline:
 	var badStatus atomic.Int64
 	var wg sync.WaitGroup
 
+	// Share a single transport so we can explicitly drain its keep-alive pool
+	// before cancelling the server, avoiding a shutdown timeout race.
+	sharedTransport := &http.Transport{MaxIdleConns: 30, MaxIdleConnsPerHost: 30}
+
 	requestWorker := func() {
 		defer wg.Done()
-		client := &http.Client{Timeout: 250 * time.Millisecond}
+		client := &http.Client{Timeout: 250 * time.Millisecond, Transport: sharedTransport}
 		for {
 			select {
 			case <-loadCtx.Done():
@@ -284,6 +288,7 @@ pipeline:
 
 	stopLoad()
 	wg.Wait()
+	sharedTransport.CloseIdleConnections() // drain pool before server shutdown to avoid deadline race
 
 	if reqErrors.Load() != 0 {
 		t.Fatalf("unexpected request errors during concurrent refresh load: %d", reqErrors.Load())

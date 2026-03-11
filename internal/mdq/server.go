@@ -114,8 +114,10 @@ func NewHandler(r *repo.Repository, opts ...HandlerOption) http.Handler {
 	mux.HandleFunc("/entities", func(w http.ResponseWriter, req *http.Request) {
 		cfg.requestCounters.RequestsTotal.Add(1)
 		cfg.requestCounters.EntitiesListRequests.Add(1)
-		format := resolveFormat(req.Header.Get("Accept"), "")
-		if format == "xml" {
+		accept := strings.ToLower(req.Header.Get("Accept"))
+		if strings.Contains(accept, "application/samlmetadata+xml") ||
+			strings.Contains(accept, "application/xml") ||
+			strings.Contains(accept, "text/xml") {
 			w.Header().Set("Content-Type", "application/samlmetadata+xml")
 			_, _ = w.Write([]byte(renderEntitiesXML(r.List(), r)))
 			return

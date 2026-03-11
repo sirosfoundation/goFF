@@ -181,3 +181,42 @@ func TestEntityLookupNotAcceptable(t *testing.T) {
 		t.Fatalf("expected 406, got %d", rr.Code)
 	}
 }
+
+func TestEntitiesListXMLByAcceptHeader(t *testing.T) {
+	id := "https://idp.example.org/idp"
+	xmlBody := `<?xml version="1.0" encoding="UTF-8"?>` + "\n" + `<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="` + id + `"></md:EntityDescriptor>` + "\n"
+	h := NewHandler(repo.New([]string{id}, map[string]string{id: xmlBody}))
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/entities", nil)
+	req.Header.Set("Accept", "application/samlmetadata+xml")
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Header().Get("Content-Type"), "application/samlmetadata+xml") {
+		t.Fatalf("unexpected content type: %q", rr.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(rr.Body.String(), "EntitiesDescriptor") {
+		t.Fatalf("expected EntitiesDescriptor wrapper, got %q", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), id) {
+		t.Fatalf("expected entity ID in response, got %q", rr.Body.String())
+	}
+}
+
+func TestEntityLookupServesStoredXML(t *testing.T) {
+	id := "https://idp.example.org/idp"
+	xmlBody := `<?xml version="1.0" encoding="UTF-8"?>` + "\n" + `<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="` + id + `"><md:IDPSSODescriptor></md:IDPSSODescriptor></md:EntityDescriptor>` + "\n"
+	h := NewHandler(repo.New([]string{id}, map[string]string{id: xmlBody}))
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/entities/"+url.PathEscape(id)+".xml", nil)
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "IDPSSODescriptor") {
+		t.Fatalf("expected stored XML body, got %q", rr.Body.String())
+	}
+}
