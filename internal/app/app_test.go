@@ -400,15 +400,14 @@ func TestRunBatchPublishPathFixtures(t *testing.T) {
 
 func TestRunBatchPublishHashAndStoreSideEffects(t *testing.T) {
 	pipelinePath := filepath.Join(t.TempDir(), "publish-side-effects.yaml")
-	pipeline := `pipeline:
-  - load:
-      entities:
-        - https://idp.example.org/idp
-  - publish:
-      output: side-effects.txt
-      hash_link: true
-      update_store: true
-      store_dir: store
+	pipeline := `- load:
+    entities:
+      - https://idp.example.org/idp
+- publish:
+    output: side-effects.txt
+    hash_link: true
+    update_store: true
+    store_dir: store
 `
 	if err := os.WriteFile(pipelinePath, []byte(pipeline), 0o600); err != nil {
 		t.Fatalf("failed writing publish side-effects pipeline: %v", err)
@@ -456,19 +455,18 @@ func TestRunBatchSignAndVerifyPipeline(t *testing.T) {
 	certFile, keyFile := writeTestCertAndKey(t)
 
 	pipelinePath := filepath.Join(t.TempDir(), "sign-verify.yaml")
-	pipeline := fmt.Sprintf(`pipeline:
-  - load:
-      entities:
-        - https://idp.example.org/idp
-  - finalize:
-      Name: https://metadata.example.org/aggregate
-  - sign:
-      key: %s
-      cert: %s
-  - verify:
-      cert: %s
-  - publish:
-      output: signed.xml
+	pipeline := fmt.Sprintf(`- load:
+    entities:
+      - https://idp.example.org/idp
+- finalize:
+    Name: https://metadata.example.org/aggregate
+- sign:
+    key: %s
+    cert: %s
+- verify:
+    cert: %s
+- publish:
+    output: signed.xml
 `, keyFile, certFile, certFile)
 
 	if err := os.WriteFile(pipelinePath, []byte(pipeline), 0o600); err != nil {
@@ -496,24 +494,23 @@ func TestRunBatchSignVerifyFinalizeDeterministicOutput(t *testing.T) {
 	certFile, keyFile := writeTestCertAndKey(t)
 
 	pipelinePath := filepath.Join(t.TempDir(), "deterministic-sign-verify.yaml")
-	pipeline := fmt.Sprintf(`pipeline:
-  - load:
-      entities:
-        - https://idp.example.org/idp
-        - https://sp.example.org/sp
-  - sort:
-      order_by: "@entityID"
-  - finalize:
-      Name: https://metadata.example.org/deterministic
-      cacheDuration: PT1H
-      validUntil: 2030-01-01T00:00:00Z
-  - sign:
-      key: %s
-      cert: %s
-  - verify:
-      cert: %s
-  - publish:
-      output: deterministic-signed.xml
+	pipeline := fmt.Sprintf(`- load:
+    entities:
+      - https://idp.example.org/idp
+      - https://sp.example.org/sp
+- sort:
+    order_by: "@entityID"
+- finalize:
+    Name: https://metadata.example.org/deterministic
+    cacheDuration: PT1H
+    validUntil: 2030-01-01T00:00:00Z
+- sign:
+    key: %s
+    cert: %s
+- verify:
+    cert: %s
+- publish:
+    output: deterministic-signed.xml
 `, keyFile, certFile, certFile)
 
 	if err := os.WriteFile(pipelinePath, []byte(pipeline), 0o600); err != nil {

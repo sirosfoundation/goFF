@@ -27,41 +27,20 @@ func ParseFile(path string) (File, error) {
 	}
 
 	body := root.Content[0]
-	if body.Kind == yaml.SequenceNode {
-		steps, err := parsePipelineSequence(body)
-		if err != nil {
-			return File{}, fmt.Errorf("parse pipeline step list: %w", err)
-		}
-
-		if len(steps) == 0 {
-			return File{}, fmt.Errorf("pipeline must contain at least one step")
-		}
-
-		return File{Pipeline: steps, BaseDir: filepath.Dir(path)}, nil
+	if body.Kind != yaml.SequenceNode {
+		return File{}, fmt.Errorf("pipeline file must be a YAML sequence of steps")
 	}
 
-	var p File
-	if err := body.Decode(&p); err != nil {
-		return File{}, fmt.Errorf("parse pipeline yaml: %w", err)
+	steps, err := parsePipelineSequence(body)
+	if err != nil {
+		return File{}, fmt.Errorf("parse pipeline step list: %w", err)
 	}
 
-	if len(p.Pipeline) == 0 {
-		stepsNode := findPipelineNode(body)
-		if stepsNode != nil {
-			steps, err := parsePipelineSequence(stepsNode)
-			if err != nil {
-				return File{}, fmt.Errorf("parse pipeline step list: %w", err)
-			}
-			p.Pipeline = steps
-		}
-	}
-
-	if len(p.Pipeline) == 0 {
+	if len(steps) == 0 {
 		return File{}, fmt.Errorf("pipeline must contain at least one step")
 	}
-	p.BaseDir = filepath.Dir(path)
 
-	return p, nil
+	return File{Pipeline: steps, BaseDir: filepath.Dir(path)}, nil
 }
 
 func parsePipelineSequence(seq *yaml.Node) ([]Step, error) {
@@ -124,20 +103,6 @@ func shouldIncludeWhen(cond string) bool {
 		// Update executor only includes explicit update-like branches.
 		return false
 	}
-}
-
-func findPipelineNode(body *yaml.Node) *yaml.Node {
-	if body == nil || body.Kind != yaml.MappingNode {
-		return nil
-	}
-	for i := 0; i+1 < len(body.Content); i += 2 {
-		k := body.Content[i]
-		v := body.Content[i+1]
-		if strings.EqualFold(strings.TrimSpace(k.Value), "pipeline") {
-			return v
-		}
-	}
-	return nil
 }
 
 // UnmarshalYAML supports two formats:
@@ -393,19 +358,34 @@ func validateAction(action string) error {
 }
 
 // UnmarshalYAML supports:
-// - scalar: source name or single entity identifier
-// - sequence: list of entity identifiers
-// - mapping: {source: federation} or {entities: [...]}
+// - scalar: URL or file path to load (e.g. "- load http://example.org/fed.xml")
+// - sequence: list of URLs/file paths
+// - mapping: {files: [...], urls: [...], entities: [...], ...}
 func (l *LoadStep) UnmarshalYAML(node *yaml.Node) error {
 	switch node.Kind {
 	case yaml.ScalarNode:
 		if node.Value == "" {
 			return nil
 		}
-		l.Source = node.Value
+		if strings.HasPrefix(node.Value, "http://") || strings.HasPrefix(node.Value, "https://") {
+			l.URLs = []string{node.Value}
+		} else {
+			l.Files = []string{node.Value}
+		}
 		return nil
 	case yaml.SequenceNode:
-		return node.Decode(&l.Entities)
+		for _, item := range node.Content {
+			if item.Kind != yaml.ScalarNode {
+				return fmt.Errorf("load sequence items must be scalars")
+			}
+			v := item.Value
+			if strings.HasPrefix(v, "http://") || strings.HasPrefix(v, "https://") {
+				l.URLs = append(l.URLs, v)
+			} else {
+				l.Files = append(l.Files, v)
+			}
+		}
+		return nil
 	case yaml.MappingNode:
 		type loadAlias LoadStep
 		var x loadAlias

@@ -1,5 +1,6 @@
 - when update:
   - load:
-      source: federation
+      entities:
+        - https://idp.example.org/idp
   - select:
       - https://idp.example.org/idp

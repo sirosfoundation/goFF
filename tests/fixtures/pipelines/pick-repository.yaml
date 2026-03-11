@@ -1,15 +1,8 @@
-sources:
-  - id: fedA
-    files:
-      - ../metadata/select-fed-a.xml
-  - id: fedB
+- load:
     files:
       - ../metadata/select-fed-b.xml
-pipeline:
-  - load:
-      source: fedA
-  - pick:
-      entities:
-        - https://sp.example.org/sp
-  - publish:
-      output: pick-repository.txt
+- pick:
+    entities:
+      - https://sp.example.org/sp
+- publish:
+    output: pick-repository.txt

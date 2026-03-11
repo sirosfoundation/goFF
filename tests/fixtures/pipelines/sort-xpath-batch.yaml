@@ -1,12 +1,7 @@
-sources:
-  - id: federation
+- load:
     files:
       - ../metadata/select-predicates.xml
-
-pipeline:
-  - load:
-      source: federation
-  - sort:
-      order_by: //saml:AttributeValue
-  - publish:
-      output: sort-xpath.txt
+- sort:
+    order_by: //saml:AttributeValue
+- publish:
+    output: sort-xpath.txt

@@ -1,15 +1,8 @@
-sources:
-  - id: fedA
+- load:
     files:
       - ../metadata/select-fed-a.xml
-  - id: fedB
-    files:
-      - ../metadata/select-fed-b.xml
-pipeline:
-  - load:
-      source: fedA
-  - filter:
-      entities:
-        - https://sp.example.org/sp
-  - publish:
-      output: filter-current-only.txt
+- filter:
+    entities:
+      - https://sp.example.org/sp
+- publish:
+    output: filter-current-only.txt

@@ -1,12 +1,11 @@
-pipeline:
-  - load:
-      entities:
-        - https://idp.example.org/idp
-        - https://sp.example.org/sp
-  - pubinfo:
-      publisher: SIROS Foundation
-      value: Metadata Service
-  - select:
-      match: publisher:siros foundation
-  - publish:
-      output: pubinfo-structured-match.txt
+- load:
+    entities:
+      - https://idp.example.org/idp
+      - https://sp.example.org/sp
+- pubinfo:
+    publisher: SIROS Foundation
+    value: Metadata Service
+- select:
+    match: publisher:siros foundation
+- publish:
+    output: pubinfo-structured-match.txt

@@ -35,9 +35,8 @@ func BenchmarkExecute_LoadSelectSortPublish_LargeAggregate(b *testing.B) {
 	}
 
 	pipeline := File{
-		Sources: []Source{{ID: "federation", Files: []string{metadataPath}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "federation"}},
+			{Action: "load", Load: LoadStep{Files: []string{metadataPath}}},
 			{Action: "select", Select: SelectStep{Role: "idp"}},
 			{Action: "sort", Sort: SortStep{OrderBy: "@entityID"}},
 			{Action: "publish", Publish: PublishStep{Output: "entities.txt"}},

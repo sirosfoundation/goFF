@@ -1,18 +1,13 @@
-sources:
-  - id: federation
+- load:
     entities:
       - https://idp.example.org/idp
       - https://sp.example.org/sp
-
-pipeline:
-  - load:
-      source: federation
-  - select:
-      entities:
-        - https://idp.example.org/idp
-  - finalize:
-      Name: https://metadata.example.org/aggregate
-      cacheDuration: PT5H
-      validUntil: P10D
-  - publish:
-      output: aggregate.xml
+- select:
+    entities:
+      - https://idp.example.org/idp
+- finalize:
+    Name: https://metadata.example.org/aggregate
+    cacheDuration: PT5H
+    validUntil: P10D
+- publish:
+    output: aggregate.xml

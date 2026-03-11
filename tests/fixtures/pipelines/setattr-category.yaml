@@ -1,12 +1,11 @@
-pipeline:
-  - load:
-      entities:
-        - https://idp.example.org/idp
-        - https://sp.example.org/sp
-  - setattr:
-      name: entity_category
-      value: https://refeds.org/category/research-and-scholarship
-  - select:
-      entity_category: https://refeds.org/category/research-and-scholarship
-  - publish:
-      output: setattr-category.txt
+- load:
+    entities:
+      - https://idp.example.org/idp
+      - https://sp.example.org/sp
+- setattr:
+    name: entity_category
+    value: https://refeds.org/category/research-and-scholarship
+- select:
+    entity_category: https://refeds.org/category/research-and-scholarship
+- publish:
+    output: setattr-category.txt

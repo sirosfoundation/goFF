@@ -1,5 +1,4 @@
-pipeline:
-  - load:
-      entities:
-        - https://idp.example.org/idp
-  - publish output as nested/output-as-publish.txt
+- load:
+    entities:
+      - https://idp.example.org/idp
+- publish output as nested/output-as-publish.txt

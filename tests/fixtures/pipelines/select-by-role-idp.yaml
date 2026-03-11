@@ -1,12 +1,7 @@
-sources:
-  - id: federation
+- load:
     files:
       - ../metadata/select-predicates.xml
-
-pipeline:
-  - load:
-      source: federation
-  - select:
-      role: idp
-  - publish:
-      output: role-idp.txt
+- select:
+    role: idp
+- publish:
+    output: role-idp.txt

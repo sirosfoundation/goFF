@@ -25,22 +25,10 @@ type Result struct {
 
 // Execute runs a parsed pipeline file.
 func Execute(p File, outputDir string) (Result, error) {
-	sourceMap := make(map[string][]string, len(p.Sources))
-	sourceAttrs := make(map[string]map[string]EntityAttributes, len(p.Sources))
-	sourceXML := make(map[string]map[string]string, len(p.Sources))
-	for _, src := range p.Sources {
-		if src.ID == "" {
-			return Result{}, fmt.Errorf("source id is required")
-		}
-		src = resolveSourcePaths(src, p.BaseDir)
-		data, err := loadSourceData(src)
-		if err != nil {
-			return Result{}, fmt.Errorf("load source %q: %w", src.ID, err)
-		}
-		sourceMap[src.ID] = data.EntityIDs
-		sourceAttrs[src.ID] = data.Attributes
-		sourceXML[src.ID] = data.EntityXML
-	}
+	// sourceMap holds in-pipeline aliases produced by "select as /name" steps.
+	sourceMap := make(map[string][]string)
+	sourceAttrs := make(map[string]map[string]EntityAttributes)
+	sourceXML := make(map[string]map[string]string)
 
 	current := make([]string, 0)
 	currentAttrs := make(map[string]EntityAttributes)
@@ -53,7 +41,7 @@ func Execute(p File, outputDir string) (Result, error) {
 	for i, step := range p.Pipeline {
 		switch step.Action {
 		case "load", "local", "remote", "fetch", "_fetch":
-			loaded, attrs, docs, err := runLoad(step.Load, sourceMap, sourceAttrs, sourceXML)
+			loaded, attrs, docs, err := runLoad(step.Load, p.BaseDir, sourceMap, sourceAttrs, sourceXML)
 			if err != nil {
 				return Result{}, fmt.Errorf("step %d load: %w", i, err)
 			}
@@ -142,17 +130,17 @@ func runFilter(cfg SelectStep, current []string, currentAttrs map[string]EntityA
 	return runSelect(cfg, current, currentAttrs, currentXML, localSourceMap, localSourceAttrs, localSourceXML)
 }
 
-func runLoad(cfg LoadStep, sourceMap map[string][]string, sourceAttrs map[string]map[string]EntityAttributes, sourceXML map[string]map[string]string) ([]string, map[string]EntityAttributes, map[string]string, error) {
+func runLoad(cfg LoadStep, baseDir string, sourceMap map[string][]string, sourceAttrs map[string]map[string]EntityAttributes, sourceXML map[string]map[string]string) ([]string, map[string]EntityAttributes, map[string]string, error) {
 	applyVia := func(ids []string, attrs map[string]EntityAttributes, docs map[string]string) ([]string, map[string]EntityAttributes, map[string]string, error) {
 		if len(cfg.Via) == 0 {
 			return ids, attrs, docs, nil
 		}
 
 		allowed := make(map[string]struct{})
-		for _, viaSource := range cfg.Via {
-			viaIDs, ok := sourceMap[viaSource]
+		for _, viaAlias := range cfg.Via {
+			viaIDs, ok := sourceMap[viaAlias]
 			if !ok {
-				return nil, nil, nil, fmt.Errorf("unknown load.via source %q", viaSource)
+				return nil, nil, nil, fmt.Errorf("unknown load.via alias %q", viaAlias)
 			}
 			for _, id := range viaIDs {
 				allowed[id] = struct{}{}
@@ -169,6 +157,7 @@ func runLoad(cfg LoadStep, sourceMap map[string][]string, sourceAttrs map[string
 		return filtered, copyForIDs(filtered, attrs), copyXMLForIDs(filtered, docs), nil
 	}
 
+	// Inline entity IDs (no real metadata loading needed).
 	if len(cfg.Entities) > 0 {
 		attrs := make(map[string]EntityAttributes, len(cfg.Entities))
 		for _, id := range cfg.Entities {
@@ -176,23 +165,65 @@ func runLoad(cfg LoadStep, sourceMap map[string][]string, sourceAttrs map[string
 			a.AddTextToken(id)
 			attrs[id] = a
 		}
-		ids := append([]string(nil), cfg.Entities...)
-		return applyVia(ids, attrs, map[string]string{})
+		return applyVia(append([]string(nil), cfg.Entities...), attrs, map[string]string{})
 	}
 
-	if cfg.Source == "" {
-		return nil, nil, nil, fmt.Errorf("load.source or load.entities is required")
+	// Files/URLs: separate real file paths from in-pipeline alias references.
+	if len(cfg.Files) > 0 || len(cfg.URLs) > 0 {
+		allIDs := make([]string, 0)
+		allAttrs := make(map[string]EntityAttributes)
+		allDocs := make(map[string]string)
+
+		merge := func(data sourceData) {
+			for _, id := range data.EntityIDs {
+				if _, seen := allAttrs[id]; !seen {
+					allIDs = append(allIDs, id)
+				}
+				allAttrs[id] = data.Attributes[id]
+				if x, ok := data.EntityXML[id]; ok {
+					allDocs[id] = x
+				}
+			}
+		}
+
+		var realFiles []string
+		for _, f := range cfg.Files {
+			// A path starting with "/" that is found in the alias map is an
+			// in-pipeline alias, not a filesystem path.
+			if strings.HasPrefix(f, "/") {
+				if ids, ok := sourceMap[f]; ok {
+					merge(sourceData{
+						EntityIDs:  ids,
+						Attributes: sourceAttrs[f],
+						EntityXML:  sourceXML[f],
+					})
+					continue
+				}
+			}
+			realFiles = append(realFiles, f)
+		}
+
+		if len(realFiles) > 0 || len(cfg.URLs) > 0 {
+			src := resolveSourcePaths(Source{
+				ID:      "_load",
+				Files:   realFiles,
+				URLs:    cfg.URLs,
+				Verify:  cfg.Verify,
+				Timeout: cfg.Timeout,
+				Retries: cfg.Retries,
+				Cleanup: cfg.Cleanup,
+			}, baseDir)
+			data, err := loadSourceData(src)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("load: %w", err)
+			}
+			merge(data)
+		}
+
+		return applyVia(allIDs, allAttrs, allDocs)
 	}
 
-	entities, ok := sourceMap[cfg.Source]
-	if !ok {
-		return nil, nil, nil, fmt.Errorf("unknown source %q", cfg.Source)
-	}
-
-	attrs := cloneAttrs(sourceAttrs[cfg.Source])
-	docs := cloneEntityXML(sourceXML[cfg.Source])
-	ids := append([]string(nil), entities...)
-	return applyVia(ids, attrs, docs)
+	return nil, nil, nil, fmt.Errorf("load: specify files, urls, or entities")
 }
 
 func runSelect(cfg SelectStep, current []string, currentAttrs map[string]EntityAttributes, currentXML map[string]string, sourceMap map[string][]string, sourceAttrs map[string]map[string]EntityAttributes, sourceXML map[string]map[string]string) ([]string, map[string]EntityAttributes, map[string]string) {

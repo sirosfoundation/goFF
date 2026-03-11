@@ -14,10 +14,6 @@ func TestParseFile(t *testing.T) {
 		t.Fatalf("ParseFile returned error: %v", err)
 	}
 
-	if len(p.Sources) != 1 {
-		t.Fatalf("expected 1 source, got %d", len(p.Sources))
-	}
-
 	if len(p.Pipeline) != 3 {
 		t.Fatalf("expected 3 steps, got %d", len(p.Pipeline))
 	}
@@ -186,7 +182,7 @@ func TestParseFilePublishAsActionOption(t *testing.T) {
 func TestParseFileSetAttrStep(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "pipeline.yaml")
-	yaml := "pipeline:\n  - load\n  - setattr:\n      name: entity_category\n      value: https://refeds.org/category/research-and-scholarship\n"
+	yaml := "- load\n- setattr:\n    name: entity_category\n    value: https://refeds.org/category/research-and-scholarship\n"
 	if err := os.WriteFile(fixture, []byte(yaml), 0o600); err != nil {
 		t.Fatalf("failed writing fixture: %v", err)
 	}
@@ -213,7 +209,7 @@ func TestParseFileSetAttrStep(t *testing.T) {
 func TestParseFileRegInfoStep(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "pipeline.yaml")
-	yaml := "pipeline:\n  - load\n  - reginfo:\n      authority: https://example.org/authority\n"
+	yaml := "- load\n- reginfo:\n    authority: https://example.org/authority\n"
 	if err := os.WriteFile(fixture, []byte(yaml), 0o600); err != nil {
 		t.Fatalf("failed writing fixture: %v", err)
 	}
@@ -255,7 +251,7 @@ func TestParseFilePublishMappingAs(t *testing.T) {
 func TestParseFilePubInfoStep(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "pipeline.yaml")
-	yaml := "pipeline:\n  - load\n  - pubinfo:\n      publisher: SIROS Foundation\n"
+	yaml := "- load\n- pubinfo:\n    publisher: SIROS Foundation\n"
 	if err := os.WriteFile(fixture, []byte(yaml), 0o600); err != nil {
 		t.Fatalf("failed writing fixture: %v", err)
 	}
@@ -279,7 +275,7 @@ func TestParseFilePubInfoStep(t *testing.T) {
 func TestParseFilePubInfoStructuredFields(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "pipeline.yaml")
-	yaml := "pipeline:\n  - load\n  - pubinfo:\n      publisher: SIROS Foundation\n      url: https://publisher.example.org\n      lang: en\n"
+	yaml := "- load\n- pubinfo:\n    publisher: SIROS Foundation\n    url: https://publisher.example.org\n    lang: en\n"
 	if err := os.WriteFile(fixture, []byte(yaml), 0o600); err != nil {
 		t.Fatalf("failed writing fixture: %v", err)
 	}
@@ -357,7 +353,7 @@ func TestParseFilePublishMappingResource(t *testing.T) {
 func TestParseFileRegInfoStructuredFields(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "pipeline.yaml")
-	yaml := "pipeline:\n  - load\n  - reginfo:\n      authority: https://example.org/authority\n      policy: https://example.org/policy\n      policies:\n        - https://example.org/policy-2\n"
+	yaml := "- load\n- reginfo:\n    authority: https://example.org/authority\n    policy: https://example.org/policy\n    policies:\n      - https://example.org/policy-2\n"
 	if err := os.WriteFile(fixture, []byte(yaml), 0o600); err != nil {
 		t.Fatalf("failed writing fixture: %v", err)
 	}
@@ -390,8 +386,8 @@ func TestParseFileLoadAliases(t *testing.T) {
 		if p.Pipeline[i].Action != w {
 			t.Fatalf("expected step %d action %q, got %q", i, w, p.Pipeline[i].Action)
 		}
-		if p.Pipeline[i].Load.Source != "federation" {
-			t.Fatalf("expected step %d load.source federation, got %q", i, p.Pipeline[i].Load.Source)
+		if p.Pipeline[i].Load.Files[0] != "/federation" {
+			t.Fatalf("expected step %d load.files[0] /federation, got %q", i, p.Pipeline[i].Load.Files[0])
 		}
 	}
 }
@@ -409,8 +405,8 @@ func TestParseFileLoadVia(t *testing.T) {
 	if p.Pipeline[0].Action != "load" {
 		t.Fatalf("expected first step to be load, got %q", p.Pipeline[0].Action)
 	}
-	if p.Pipeline[0].Load.Source != "federation" {
-		t.Fatalf("expected load.source federation, got %q", p.Pipeline[0].Load.Source)
+	if p.Pipeline[0].Load.Files[0] != "/federation" {
+		t.Fatalf("expected load.files[0] /federation, got %q", p.Pipeline[0].Load.Files[0])
 	}
 	if len(p.Pipeline[0].Load.Via) != 1 || p.Pipeline[0].Load.Via[0] != "/idp-only" {
 		t.Fatalf("expected load.via [/idp-only], got %#v", p.Pipeline[0].Load.Via)
@@ -465,7 +461,7 @@ func TestParseFileNativeStepSequence(t *testing.T) {
 func TestParseFileRejectsInvalidSelectActionOptions(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "pipeline.yaml")
-	yaml := "pipeline:\n  - load\n  - select as\n"
+	yaml := "- load\n- select as\n"
 	if err := os.WriteFile(fixture, []byte(yaml), 0o600); err != nil {
 		t.Fatalf("failed writing fixture: %v", err)
 	}
@@ -482,7 +478,7 @@ func TestParseFileRejectsInvalidSelectActionOptions(t *testing.T) {
 func TestParseFileRejectsInvalidSortActionOptions(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "pipeline.yaml")
-	yaml := "pipeline:\n  - load\n  - sort order_by\n"
+	yaml := "- load\n- sort order_by\n"
 	if err := os.WriteFile(fixture, []byte(yaml), 0o600); err != nil {
 		t.Fatalf("failed writing fixture: %v", err)
 	}
@@ -499,7 +495,7 @@ func TestParseFileRejectsInvalidSortActionOptions(t *testing.T) {
 func TestParseFileRejectsInvalidSortArgumentKind(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "pipeline.yaml")
-	yaml := "pipeline:\n  - load\n  - sort:\n    - \"@entityID\"\n"
+	yaml := "- load\n- sort:\n  - \"@entityID\"\n"
 	if err := os.WriteFile(fixture, []byte(yaml), 0o600); err != nil {
 		t.Fatalf("failed writing fixture: %v", err)
 	}
@@ -516,7 +512,7 @@ func TestParseFileRejectsInvalidSortArgumentKind(t *testing.T) {
 func TestParseFileRejectsKnownUnsupportedAction(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "pipeline.yaml")
-	yaml := "pipeline:\n  - load\n  - xslt:\n      stylesheet: foo.xsl\n"
+	yaml := "- load\n- xslt:\n    stylesheet: foo.xsl\n"
 	if err := os.WriteFile(fixture, []byte(yaml), 0o600); err != nil {
 		t.Fatalf("failed writing fixture: %v", err)
 	}
@@ -533,7 +529,7 @@ func TestParseFileRejectsKnownUnsupportedAction(t *testing.T) {
 func TestParseFileRejectsUnknownAction(t *testing.T) {
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "pipeline.yaml")
-	yaml := "pipeline:\n  - load\n  - totally_made_up_action\n"
+	yaml := "- load\n- totally_made_up_action\n"
 	if err := os.WriteFile(fixture, []byte(yaml), 0o600); err != nil {
 		t.Fatalf("failed writing fixture: %v", err)
 	}

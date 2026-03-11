@@ -1,11 +1,7 @@
-sources:
-  - id: federation
+- load:
     files:
       - ../metadata/select-predicates.xml
-pipeline:
-  - load:
-      source: federation
-  - select:
-      selector: "//md:EntityDescriptor[md:IDPSSODescriptor]+//md:EntityDescriptor[md:SPSSODescriptor]"
-  - publish:
-      output: intersection.txt
+- select:
+    selector: "//md:EntityDescriptor[md:IDPSSODescriptor]+//md:EntityDescriptor[md:SPSSODescriptor]"
+- publish:
+    output: intersection.txt

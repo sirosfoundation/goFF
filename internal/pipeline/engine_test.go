@@ -180,11 +180,8 @@ func TestExecuteLoadFromSourceFile(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{
-			{ID: "federation", Files: []string{metadataPath}},
-		},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "federation"}},
+			{Action: "load", Load: LoadStep{Files: []string{metadataPath}}},
 		},
 	}
 
@@ -213,11 +210,8 @@ func TestExecuteLoadFromSourceURL(t *testing.T) {
 	defer ts.Close()
 
 	p := File{
-		Sources: []Source{
-			{ID: "federation", URLs: []string{ts.URL}},
-		},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "federation"}},
+			{Action: "load", Load: LoadStep{URLs: []string{ts.URL}}},
 		},
 	}
 
@@ -233,11 +227,11 @@ func TestExecuteLoadFromSourceURL(t *testing.T) {
 
 func TestExecuteLoadViaIntersectsWithViaSource(t *testing.T) {
 	p := File{
-		Sources: []Source{
-			{ID: "federation", Entities: []string{"https://idp.example.org/idp", "https://sp.example.org/sp"}},
-			{ID: "/idp-only", Entities: []string{"https://idp.example.org/idp"}},
+		Pipeline: []Step{
+			{Action: "load", Load: LoadStep{Entities: []string{"https://idp.example.org/idp"}}},
+			{Action: "select", Select: SelectStep{As: "/idp-only"}},
+			{Action: "load", Load: LoadStep{Entities: []string{"https://idp.example.org/idp", "https://sp.example.org/sp"}, Via: []string{"/idp-only"}}},
 		},
-		Pipeline: []Step{{Action: "load", Load: LoadStep{Source: "federation", Via: []string{"/idp-only"}}}},
 	}
 
 	res, err := Execute(p, t.TempDir())
@@ -252,15 +246,14 @@ func TestExecuteLoadViaIntersectsWithViaSource(t *testing.T) {
 
 func TestExecuteLoadViaUnknownSourceFails(t *testing.T) {
 	p := File{
-		Sources:  []Source{{ID: "federation", Entities: []string{"https://idp.example.org/idp"}}},
-		Pipeline: []Step{{Action: "load", Load: LoadStep{Source: "federation", Via: []string{"/missing"}}}},
+		Pipeline: []Step{{Action: "load", Load: LoadStep{Entities: []string{"https://idp.example.org/idp"}, Via: []string{"/missing"}}}},
 	}
 
 	_, err := Execute(p, t.TempDir())
 	if err == nil {
 		t.Fatal("expected Execute to fail for unknown load.via source")
 	}
-	if !strings.Contains(err.Error(), "unknown load.via source") {
+	if !strings.Contains(err.Error(), "unknown load.via alias") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -559,8 +552,7 @@ func TestExecuteLoadFromSourceFileMissingEntityIDFails(t *testing.T) {
 	}
 
 	p := File{
-		Sources:  []Source{{ID: "federation", Files: []string{metadataPath}}},
-		Pipeline: []Step{{Action: "load", Load: LoadStep{Source: "federation"}}},
+		Pipeline: []Step{{Action: "load", Load: LoadStep{Files: []string{metadataPath}}}},
 	}
 
 	_, err := Execute(p, t.TempDir())
@@ -579,8 +571,7 @@ func TestExecuteLoadFromSourceFileMalformedXMLFails(t *testing.T) {
 	}
 
 	p := File{
-		Sources:  []Source{{ID: "federation", Files: []string{metadataPath}}},
-		Pipeline: []Step{{Action: "load", Load: LoadStep{Source: "federation"}}},
+		Pipeline: []Step{{Action: "load", Load: LoadStep{Files: []string{metadataPath}}}},
 	}
 
 	_, err := Execute(p, t.TempDir())
@@ -612,9 +603,8 @@ func TestExecuteSelectByRole(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "federation", Files: []string{metadataPath}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "federation"}},
+			{Action: "load", Load: LoadStep{Files: []string{metadataPath}}},
 			{Action: "select", Select: SelectStep{Role: "idp"}},
 		},
 	}
@@ -652,9 +642,8 @@ func TestExecuteSelectByRolesAll(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "federation", Files: []string{metadataPath}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "federation"}},
+			{Action: "load", Load: LoadStep{Files: []string{metadataPath}}},
 			{Action: "select", Select: SelectStep{Roles: []string{"idp", "sp"}, Match: "all"}},
 		},
 	}
@@ -697,9 +686,8 @@ func TestExecuteSelectByEntityCategory(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "federation", Files: []string{metadataPath}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "federation"}},
+			{Action: "load", Load: LoadStep{Files: []string{metadataPath}}},
 			{Action: "select", Select: SelectStep{EntityCategory: "https://refeds.org/category/research-and-scholarship"}},
 		},
 	}
@@ -734,9 +722,8 @@ func TestExecuteSelectByRegistrationAuthority(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "federation", Files: []string{metadataPath}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "federation"}},
+			{Action: "load", Load: LoadStep{Files: []string{metadataPath}}},
 			{Action: "select", Select: SelectStep{RegistrationAuthority: "https://authority.example.org"}},
 		},
 	}
@@ -849,9 +836,8 @@ func TestExecuteSelectByPyFFStyleSelectorExpression(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "federation", Files: []string{metadataPath}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "federation"}},
+			{Action: "load", Load: LoadStep{Files: []string{metadataPath}}},
 			{Action: "select", Select: SelectStep{Selector: "!//md:EntityDescriptor[md:SPSSODescriptor]"}},
 		},
 	}
@@ -871,7 +857,7 @@ func TestExecuteSelectAsAliasCanBeLoaded(t *testing.T) {
 		Pipeline: []Step{
 			{Action: "load", Load: LoadStep{Entities: []string{"https://idp.example.org/idp", "https://sp.example.org/sp"}}},
 			{Action: "select", Select: SelectStep{Entities: []string{"https://idp.example.org/idp"}, As: "/idps"}},
-			{Action: "load", Load: LoadStep{Source: "/idps"}},
+			{Action: "load", Load: LoadStep{Files: []string{"/idps"}}},
 		},
 	}
 
@@ -907,9 +893,8 @@ func TestExecuteSelectMatchQueryByText(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "federation", Files: []string{metadataPath}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "federation"}},
+			{Action: "load", Load: LoadStep{Files: []string{metadataPath}}},
 			{Action: "select", Select: SelectStep{Match: "identity provider"}},
 		},
 	}
@@ -946,9 +931,8 @@ func TestExecuteSelectMatchQueryByIPHint(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "federation", Files: []string{metadataPath}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "federation"}},
+			{Action: "load", Load: LoadStep{Files: []string{metadataPath}}},
 			{Action: "select", Select: SelectStep{Match: "192.0.2.42"}},
 		},
 	}
@@ -1001,9 +985,8 @@ func TestExecuteSelectByXPathRegistrationAuthority(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "federation", Files: []string{metadataPath}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "federation"}},
+			{Action: "load", Load: LoadStep{Files: []string{metadataPath}}},
 			{Action: "select", Select: SelectStep{Selector: `//md:EntityDescriptor[md:Extensions/mdrpi:RegistrationInfo/@registrationAuthority='https://authority.example.org']`}},
 		},
 	}
@@ -1040,9 +1023,8 @@ func TestExecuteSelectByXPathEntityCategory(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "federation", Files: []string{metadataPath}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "federation"}},
+			{Action: "load", Load: LoadStep{Files: []string{metadataPath}}},
 			{Action: "select", Select: SelectStep{Selector: `//md:EntityDescriptor[md:Extensions/mdattr:EntityAttributes/saml:Attribute[@Name='http://macedir.org/entity-category']/saml:AttributeValue='https://refeds.org/category/research-and-scholarship']`}},
 		},
 	}
@@ -1079,9 +1061,8 @@ func TestExecuteSelectByXPathPredicateAnd(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "federation", Files: []string{metadataPath}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "federation"}},
+			{Action: "load", Load: LoadStep{Files: []string{metadataPath}}},
 			{Action: "select", Select: SelectStep{Selector: `//md:EntityDescriptor[md:IDPSSODescriptor and md:Extensions/mdrpi:RegistrationInfo/@registrationAuthority='https://authority.example.org']`}},
 		},
 	}
@@ -1138,13 +1119,11 @@ func TestExecuteSelectRepositoryScopedXPath(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{
-			{ID: "fedA", Files: []string{f1}},
-			{ID: "fedB", Files: []string{f2}},
-		},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "fedA"}},
-			{Action: "select", Select: SelectStep{Selector: `fedB!//md:EntityDescriptor[md:SPSSODescriptor]`}},
+			{Action: "load", Load: LoadStep{Files: []string{f2}}},
+			{Action: "select", Select: SelectStep{As: "/fed-b"}},
+			{Action: "load", Load: LoadStep{Files: []string{f1}}},
+			{Action: "select", Select: SelectStep{Selector: `/fed-b!//md:EntityDescriptor[md:SPSSODescriptor]`}},
 		},
 	}
 
@@ -1178,9 +1157,8 @@ func TestExecuteSelectByIntersection(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "federation", Files: []string{metadataPath}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "federation"}},
+			{Action: "load", Load: LoadStep{Files: []string{metadataPath}}},
 			{Action: "select", Select: SelectStep{Selector: `//md:EntityDescriptor[md:IDPSSODescriptor]+//md:EntityDescriptor[md:SPSSODescriptor]`}},
 		},
 	}
@@ -1219,10 +1197,11 @@ func TestExecuteSelectEntitiesMemberUsesRepositorySyntax(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "fedA", Files: []string{f1}}, {ID: "fedB", Files: []string{f2}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "fedA"}},
-			{Action: "select", Select: SelectStep{Entities: []string{"fedB!//md:EntityDescriptor[md:SPSSODescriptor]"}}},
+			{Action: "load", Load: LoadStep{Files: []string{f2}}},
+			{Action: "select", Select: SelectStep{As: "/fed-b"}},
+			{Action: "load", Load: LoadStep{Files: []string{f1}}},
+			{Action: "select", Select: SelectStep{Entities: []string{"/fed-b!//md:EntityDescriptor[md:SPSSODescriptor]"}}},
 		},
 	}
 
@@ -1260,9 +1239,8 @@ func TestExecuteSelectEntityIDFromRepositoryNotOnlyCurrent(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "fedA", Files: []string{f1}}, {ID: "fedB", Files: []string{f2}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "fedA"}},
+			{Action: "load", Load: LoadStep{Files: []string{f1, f2}}},
 			{Action: "select", Select: SelectStep{Entities: []string{"https://sp.example.org/sp"}}},
 		},
 	}
@@ -1297,9 +1275,8 @@ func TestExecuteSelectWithoutArgsSelectsRepository(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "fedA", Files: []string{f1}}, {ID: "fedB", Files: []string{f2}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "fedA"}},
+			{Action: "load", Load: LoadStep{Files: []string{f1, f2}}},
 			{Action: "select"},
 		},
 	}
@@ -1321,9 +1298,8 @@ func TestExecuteSelectByCurlyAttributeSyntax(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "federation", Files: []string{metadataPath}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "federation"}},
+			{Action: "load", Load: LoadStep{Files: []string{metadataPath}}},
 			{Action: "select", Select: SelectStep{Entities: []string{"{http://macedir.org/entity-category}https://refeds.org/category/research-and-scholarship"}}},
 		},
 	}
@@ -1355,9 +1331,8 @@ func TestExecuteSelectByRemoteSelectorList(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "federation", Files: []string{metadataPath}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "federation"}},
+			{Action: "load", Load: LoadStep{Files: []string{metadataPath}}},
 			{Action: "select", Select: SelectStep{Entities: []string{tss.URL}}},
 		},
 	}
@@ -1392,11 +1367,10 @@ func TestExecuteSortByEntityID(t *testing.T) {
 
 func TestExecuteLoadAliases(t *testing.T) {
 	p := File{
-		Sources: []Source{{ID: "federation", Entities: []string{"https://idp.example.org/idp"}}},
 		Pipeline: []Step{
-			{Action: "remote", Load: LoadStep{Source: "federation"}},
-			{Action: "local", Load: LoadStep{Source: "federation"}},
-			{Action: "_fetch", Load: LoadStep{Source: "federation"}},
+			{Action: "remote", Load: LoadStep{Entities: []string{"https://idp.example.org/idp"}}},
+			{Action: "local", Load: LoadStep{Entities: []string{"https://idp.example.org/idp"}}},
+			{Action: "_fetch", Load: LoadStep{Entities: []string{"https://idp.example.org/idp"}}},
 		},
 	}
 
@@ -1507,9 +1481,8 @@ func TestExecuteSortByXPathValue(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "federation", Files: []string{metadataPath}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "federation"}},
+			{Action: "load", Load: LoadStep{Files: []string{metadataPath}}},
 			{Action: "sort", Sort: SortStep{OrderBy: "//mdui:DisplayName"}},
 		},
 	}
@@ -1544,9 +1517,8 @@ func TestExecuteFilterUsesCurrentWorkingSet(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "fedA", Files: []string{f1}}, {ID: "fedB", Files: []string{f2}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "fedA"}},
+			{Action: "load", Load: LoadStep{Files: []string{f1}}},
 			{Action: "filter", Filter: SelectStep{Entities: []string{"https://sp.example.org/sp"}}},
 		},
 	}
@@ -1581,9 +1553,8 @@ func TestExecutePickUsesRepositorySelection(t *testing.T) {
 	}
 
 	p := File{
-		Sources: []Source{{ID: "fedA", Files: []string{f1}}, {ID: "fedB", Files: []string{f2}}},
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{Source: "fedA"}},
+			{Action: "load", Load: LoadStep{Files: []string{f1, f2}}},
 			{Action: "pick", Pick: SelectStep{Entities: []string{"https://sp.example.org/sp"}}},
 		},
 	}

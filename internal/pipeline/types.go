@@ -8,9 +8,8 @@ import (
 
 // File represents a pipeline YAML file.
 type File struct {
-	Sources  []Source `yaml:"sources"`
-	Pipeline []Step   `yaml:"pipeline"`
-	BaseDir  string   `yaml:"-"`
+	Pipeline []Step `yaml:"pipeline"`
+	BaseDir  string `yaml:"-"`
 }
 
 // Source is a named metadata source used by load steps.
@@ -43,9 +42,16 @@ type Step struct {
 	Stats    StatsStep
 }
 
-// LoadStep selects a source to load from the source map.
+// LoadStep loads metadata into the pipeline.
+// Resources are given directly as files, URLs, or inline entity IDs.
+// In-pipeline aliases produced by "select as /name" can be referenced in Files.
 type LoadStep struct {
-	Source   string   `yaml:"source"`
+	Files   []string `yaml:"files"`
+	URLs    []string `yaml:"urls"`
+	Verify  string   `yaml:"verify"`
+	Timeout string   `yaml:"timeout"`
+	Retries int      `yaml:"retries"`
+	Cleanup bool     `yaml:"cleanup"`
 	Entities []string `yaml:"entities"`
 	Via      []string `yaml:"via"`
 }

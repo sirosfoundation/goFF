@@ -1,11 +1,10 @@
-pipeline:
-  - load:
-      entities:
-        - https://idp.example.org/idp
-        - https://sp.example.org/sp
-  - pubinfo:
-      publisher: SIROS Foundation
-  - select:
-      match: siros foundation
-  - publish:
-      output: pubinfo-match.txt
+- load:
+    entities:
+      - https://idp.example.org/idp
+      - https://sp.example.org/sp
+- pubinfo:
+    publisher: SIROS Foundation
+- select:
+    match: siros foundation
+- publish:
+    output: pubinfo-match.txt

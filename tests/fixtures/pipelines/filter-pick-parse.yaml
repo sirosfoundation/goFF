@@ -1,9 +1,9 @@
-pipeline:
-  - load:
-      source: federation
-  - filter as /filtered:
-      entities:
-        - https://idp.example.org/idp
-  - pick:
-      entities:
-        - https://sp.example.org/sp
+- load:
+    files:
+      - /federation
+- filter as /filtered:
+    entities:
+      - https://idp.example.org/idp
+- pick:
+    entities:
+      - https://sp.example.org/sp

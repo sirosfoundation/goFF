@@ -1,6 +1,5 @@
-pipeline:
-  - load:
-      entities:
-        - https://idp.example.org/idp
-  - publish:
-      resource: nested/mapping-resource.txt
+- load:
+    entities:
+      - https://idp.example.org/idp
+- publish:
+    resource: nested/mapping-resource.txt

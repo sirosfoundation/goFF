@@ -97,14 +97,9 @@ func TestRunServerRefreshesFromFileSource(t *testing.T) {
 	writeFile(t, metadataPath, metadataXML("https://idp.example.org/idp-1"))
 
 	pipelinePath := filepath.Join(t.TempDir(), "pipeline.yaml")
-	writeFile(t, pipelinePath, fmt.Sprintf(`sources:
-  - id: federation
+	writeFile(t, pipelinePath, fmt.Sprintf(`- load:
     files:
       - %s
-
-pipeline:
-  - load:
-      source: federation
 `, metadataPath))
 
 	addr := reserveAddr(t)
@@ -145,14 +140,9 @@ func TestRunServerRefreshesFromURLSource(t *testing.T) {
 	defer ts.Close()
 
 	pipelinePath := filepath.Join(t.TempDir(), "pipeline.yaml")
-	writeFile(t, pipelinePath, fmt.Sprintf(`sources:
-  - id: federation
+	writeFile(t, pipelinePath, fmt.Sprintf(`- load:
     urls:
       - %s
-
-pipeline:
-  - load:
-      source: federation
 `, ts.URL))
 
 	addr := reserveAddr(t)
@@ -190,14 +180,9 @@ func TestRunServerRefreshConcurrentRequestLoad(t *testing.T) {
 	writeFile(t, metadataPath, metadataXML(entity1))
 
 	pipelinePath := filepath.Join(t.TempDir(), "pipeline.yaml")
-	writeFile(t, pipelinePath, fmt.Sprintf(`sources:
-  - id: federation
+	writeFile(t, pipelinePath, fmt.Sprintf(`- load:
     files:
       - %s
-
-pipeline:
-  - load:
-      source: federation
 `, metadataPath))
 
 	addr := reserveAddr(t)

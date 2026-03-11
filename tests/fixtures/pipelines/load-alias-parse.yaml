@@ -1,7 +1,9 @@
-pipeline:
-  - remote:
-      source: federation
-  - local:
-      source: federation
-  - _fetch:
-      source: federation
+- remote:
+    files:
+      - /federation
+- local:
+    files:
+      - /federation
+- _fetch:
+    files:
+      - /federation

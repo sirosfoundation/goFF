@@ -1,13 +1,12 @@
-pipeline:
-  - load:
-      entities:
-        - https://idp.example.org/idp
-        - https://sp.example.org/sp
-  - pubinfo:
-      values:
-        - Alpha Service
-        - Beta Service
-  - select:
-      match: value:beta service
-  - publish:
-      output: pubinfo-values-structured-match.txt
+- load:
+    entities:
+      - https://idp.example.org/idp
+      - https://sp.example.org/sp
+- pubinfo:
+    values:
+      - Alpha Service
+      - Beta Service
+- select:
+    match: value:beta service
+- publish:
+    output: pubinfo-values-structured-match.txt

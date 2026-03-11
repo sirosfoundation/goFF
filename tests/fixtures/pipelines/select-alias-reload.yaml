@@ -1,13 +1,10 @@
-sources:
-  - id: federation
+- load:
     files:
       - ../metadata/select-predicates.xml
-pipeline:
-  - load:
-      source: federation
-  - select as /idp-only:
-      role: idp
-  - load:
-      source: /idp-only
-  - publish:
-      output: select-alias-reload.txt
+- select as /idp-only:
+    role: idp
+- load:
+    files:
+      - /idp-only
+- publish:
+    output: select-alias-reload.txt
