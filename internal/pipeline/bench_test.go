@@ -88,3 +88,36 @@ func roleSuffix(i int) string {
 	}
 	return "sp"
 }
+
+// BenchmarkBuildEntitiesXML measures aggregate XML serialisation for large repos.
+func BenchmarkBuildEntitiesXML_LargeAggregate(b *testing.B) {
+	const entityCount = 5000
+	xmlBody := benchmarkMetadataXML(entityCount)
+
+	// Build a per-entity XML map to simulate a real publish path.
+	attrs, err := parseMetadataFromXML([]byte(xmlBody))
+	if err != nil {
+		b.Fatalf("parseMetadataFromXML: %v", err)
+	}
+	ids := make([]string, 0, len(attrs))
+	bodies := make(map[string]string, len(attrs))
+	for id := range attrs {
+		ids = append(ids, id)
+		// Minimal per-entity XML body.
+		bodies[id] = fmt.Sprintf(`<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="%s"/>`, id)
+	}
+
+	ac := AggregateConfig{
+		Name:          "https://mdq.example.org/entities",
+		CacheDuration: "PT1H",
+		ValidUntil:    "P7D",
+	}
+
+	b.SetBytes(int64(len(xmlBody)))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_ = BuildEntitiesXML(ids, bodies, ac)
+	}
+}

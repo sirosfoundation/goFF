@@ -25,6 +25,12 @@ test: check-go-version ## Run tests
 bench: check-go-version ## Run baseline benchmarks
 	go test -run '^$$' -bench . -benchmem ./internal/pipeline
 
+.PHONY: fuzz
+fuzz: check-go-version ## Run fuzz tests for a short smoke duration (5 s each)
+	go test -run '^$$' -fuzz FuzzParseMetadataFromXML  -fuzztime 5s ./internal/pipeline
+	go test -run '^$$' -fuzz FuzzParseEntityXMLByID    -fuzztime 5s ./internal/pipeline
+	go test -run '^$$' -fuzz FuzzParsePipelineYAML     -fuzztime 5s ./internal/pipeline
+
 .PHONY: lint
 lint: ## Run golangci-lint if installed
 	golangci-lint run ./...

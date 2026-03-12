@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/sirosfoundation/goff/internal/pipeline"
 	"github.com/sirosfoundation/goff/internal/repo"
@@ -331,5 +332,30 @@ func TestWithRequestCountersSharesCounters(t *testing.T) {
 
 	if c.RequestsTotal.Load() != 2 {
 		t.Fatalf("expected 2 total requests via shared counter, got %d", c.RequestsTotal.Load())
+	}
+}
+
+func TestCacheHeadersFromRFC3339ValidUntil(t *testing.T) {
+	id := "https://idp.example.org/idp"
+	// Use a ValidUntil that parses as RFC3339 — far future so max-age is positive.
+	future := time.Now().UTC().Add(7 * 24 * time.Hour).Truncate(time.Second)
+	validUntilStr := future.Format(time.RFC3339)
+	h := NewHandler(repo.New([]string{id}),
+		WithAggregateConfig(pipeline.AggregateConfig{ValidUntil: validUntilStr}),
+	)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/entities", nil)
+	req.Header.Set("Accept", "application/samlmetadata+xml")
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if rr.Header().Get("Expires") == "" {
+		t.Fatal("expected Expires header to be set when ValidUntil is an RFC3339 timestamp")
+	}
+	cc := rr.Header().Get("Cache-Control")
+	if !strings.HasPrefix(cc, "max-age=") {
+		t.Fatalf("expected Cache-Control max-age from RFC3339 ValidUntil, got %q", cc)
 	}
 }

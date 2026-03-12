@@ -1950,3 +1950,144 @@ func TestExecuteXSLTTransformsEntities(t *testing.T) {
 		t.Fatal("expected entities after XSLT transform, got none")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Multi-source deduplication (mergeAttributes / mergeRoleSets / descriptorRole)
+// ---------------------------------------------------------------------------
+
+// select-fed-a.xml: https://idp.example.org/idp (IDP), https://bridge.example.org/bridge (IDP+SP)
+// select-fed-b.xml: https://sp.example.org/sp (SP),   https://bridge.example.org/bridge (IDP+SP)
+// bridge appears in both — loading both in one load step must not duplicate it.
+func TestExecuteLoadTwoFilesDeduplicatesSharedEntity(t *testing.T) {
+	fedA := filepath.Join("..", "..", "tests", "fixtures", "metadata", "select-fed-a.xml")
+	fedB := filepath.Join("..", "..", "tests", "fixtures", "metadata", "select-fed-b.xml")
+
+	p := File{
+		Pipeline: []Step{
+			{Action: "load", Load: LoadStep{Files: []string{fedA, fedB}}},
+			{Action: "select"},
+		},
+	}
+
+	res, err := Execute(p, t.TempDir())
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	// 3 distinct entities: idp, sp, bridge (bridge deduped)
+	if len(res.Entities) != 3 {
+		t.Fatalf("expected 3 distinct entities after loading two overlapping files, got %d: %v", len(res.Entities), res.Entities)
+	}
+
+	seen := make(map[string]bool, len(res.Entities))
+	for _, id := range res.Entities {
+		if seen[id] {
+			t.Fatalf("entity %q appears more than once in result", id)
+		}
+		seen[id] = true
+	}
+}
+
+// After loading two files the merged entity should carry roles from both sources.
+func TestExecuteLoadTwoFilesMergesRolesForSharedEntity(t *testing.T) {
+	fedA := filepath.Join("..", "..", "tests", "fixtures", "metadata", "select-fed-a.xml")
+	fedB := filepath.Join("..", "..", "tests", "fixtures", "metadata", "select-fed-b.xml")
+
+	// select by IDP role — bridge is in fed-a as IDP+SP, should still appear after merge
+	p := File{
+		Pipeline: []Step{
+			{Action: "load", Load: LoadStep{Files: []string{fedA, fedB}}},
+			{Action: "select", Select: SelectStep{Role: "idp"}},
+		},
+	}
+
+	res, err := Execute(p, t.TempDir())
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	// idp.example.org (IDP) + bridge (IDP+SP) should match the role=idp filter
+	bridgeSeen := false
+	for _, id := range res.Entities {
+		if id == "https://bridge.example.org/bridge" {
+			bridgeSeen = true
+		}
+	}
+	if !bridgeSeen {
+		t.Fatalf("expected bridge entity (IDP role from fed-a) to survive merge and role filter; got %v", res.Entities)
+	}
+}
+
+// descriptorRole coverage: AADescriptor, AuthnDescriptor, PDPDescriptor are rarely loaded.
+// Test the mapping by loading inline entities with those roles via direct unit approach.
+func TestDescriptorRoleMapsAllKnownTypes(t *testing.T) {
+	for _, tc := range []struct {
+		localName string
+		wantRole  string
+	}{
+		{"IDPSSODescriptor", "idp"},
+		{"SPSSODescriptor", "sp"},
+		{"AttributeAuthorityDescriptor", "aa"},
+		{"AuthnAuthorityDescriptor", "authn"},
+		{"PDPDescriptor", "pdp"},
+	} {
+		role, ok := descriptorRole(tc.localName)
+		if !ok {
+			t.Errorf("descriptorRole(%q) returned ok=false", tc.localName)
+		}
+		if role != tc.wantRole {
+			t.Errorf("descriptorRole(%q) = %q, want %q", tc.localName, role, tc.wantRole)
+		}
+	}
+
+	_, ok := descriptorRole("UnknownDescriptor")
+	if ok {
+		t.Error("descriptorRole(UnknownDescriptor) should return ok=false")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// syncCurrentAttrsToSources
+// ---------------------------------------------------------------------------
+
+// After setattr modifies currentAttrs, subsequent fork sub-pipelines should see
+// the updated attributes through the shared sourceAttrs map.
+func TestExecuteSetAttrSyncsIntoSourceMap(t *testing.T) {
+	fedA := filepath.Join("..", "..", "tests", "fixtures", "metadata", "select-fed-a.xml")
+
+	// Load, select all, setattr, then fork — fork clones state at call time.
+	// The entity category set by setattr should be visible inside the fork
+	// because syncCurrentAttrsToSources propagates currentAttrs back to sourceAttrs.
+	p := File{
+		Pipeline: []Step{
+			{Action: "load", Load: LoadStep{Files: []string{fedA}}},
+			{Action: "select"},
+			{Action: "setattr", SetAttr: SetAttrStep{
+				Name:  "entity_category",
+				Value: "https://refeds.org/category/research-and-scholarship",
+			}},
+			{Action: "fork", Fork: ForkStep{Pipeline: []Step{
+				{Action: "select", Select: SelectStep{
+					EntityCategory: "https://refeds.org/category/research-and-scholarship",
+				}},
+				{Action: "publish", Publish: PublishStep{Output: "fork-out.txt"}},
+			}}},
+		},
+	}
+
+	outDir := t.TempDir()
+	_, err := Execute(p, outDir)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	b, err := os.ReadFile(filepath.Join(outDir, "fork-out.txt"))
+	if err != nil {
+		t.Fatalf("expected fork output file: %v", err)
+	}
+	// All 2 entities in fed-a had the category set, so both should appear.
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 entities in fork output after setattr sync, got %d: %v", len(lines), lines)
+	}
+}

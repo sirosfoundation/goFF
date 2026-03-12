@@ -542,3 +542,70 @@ func TestParseFileRejectsUnknownAction(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestParseFileDiscoJSONScalarSyntax(t *testing.T) {
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "pipeline.yaml")
+	content := "- load\n- discojson /tmp/disco.json\n"
+	if err := os.WriteFile(fixture, []byte(content), 0o600); err != nil {
+		t.Fatalf("failed writing fixture: %v", err)
+	}
+
+	p, err := ParseFile(fixture)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	if len(p.Pipeline) != 2 {
+		t.Fatalf("expected 2 steps, got %d", len(p.Pipeline))
+	}
+	if p.Pipeline[1].Action != "discojson" {
+		t.Fatalf("expected discojson action, got %q", p.Pipeline[1].Action)
+	}
+	if p.Pipeline[1].DiscoJSON.Output != "/tmp/disco.json" {
+		t.Fatalf("expected DiscoJSON.Output to be /tmp/disco.json, got %q", p.Pipeline[1].DiscoJSON.Output)
+	}
+}
+
+func TestParseFileDiscoJSONMappingSyntax(t *testing.T) {
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "pipeline.yaml")
+	content := "- load\n- discojson:\n    output: /tmp/disco.json\n"
+	if err := os.WriteFile(fixture, []byte(content), 0o600); err != nil {
+		t.Fatalf("failed writing fixture: %v", err)
+	}
+
+	p, err := ParseFile(fixture)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	if p.Pipeline[1].DiscoJSON.Output != "/tmp/disco.json" {
+		t.Fatalf("expected DiscoJSON.Output to be /tmp/disco.json, got %q", p.Pipeline[1].DiscoJSON.Output)
+	}
+}
+
+// TestParseFileSortMappingScalarValue exercises SortStep.UnmarshalYAML scalar branch.
+// The YAML form "sort: \"@entityID\"" produces a mapping step where the
+// value node is a scalar, which goes through SortStep.UnmarshalYAML.
+func TestParseFileSortMappingScalarValue(t *testing.T) {
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "pipeline.yaml")
+	// YAML: the mapping value "@entityID" is a plain scalar node.
+	content := "- load\n- sort: \"@entityID\"\n"
+	if err := os.WriteFile(fixture, []byte(content), 0o600); err != nil {
+		t.Fatalf("failed writing fixture: %v", err)
+	}
+
+	p, err := ParseFile(fixture)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	if len(p.Pipeline) != 2 {
+		t.Fatalf("expected 2 steps, got %d", len(p.Pipeline))
+	}
+	if p.Pipeline[1].Action != "sort" {
+		t.Fatalf("expected sort action, got %q", p.Pipeline[1].Action)
+	}
+	if p.Pipeline[1].Sort.OrderBy != "@entityID" {
+		t.Fatalf("expected Sort.OrderBy to be @entityID, got %q", p.Pipeline[1].Sort.OrderBy)
+	}
+}
