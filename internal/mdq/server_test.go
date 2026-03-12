@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/sirosfoundation/goff/internal/pipeline"
 	"github.com/sirosfoundation/goff/internal/repo"
 )
 
@@ -218,5 +219,117 @@ func TestEntityLookupServesStoredXML(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "IDPSSODescriptor") {
 		t.Fatalf("expected stored XML body, got %q", rr.Body.String())
+	}
+}
+
+func TestAggregateXMLHasNameFromBaseURL(t *testing.T) {
+	id := "https://idp.example.org/idp"
+	h := NewHandler(repo.New([]string{id}), WithBaseURL("https://mdq.example.org"))
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/entities", nil)
+	req.Header.Set("Accept", "application/samlmetadata+xml")
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `Name="https://mdq.example.org/entities"`) {
+		t.Fatalf("expected @Name derived from base URL, got:\n%s", body)
+	}
+}
+
+func TestAggregateXMLNameFromProxyHeaders(t *testing.T) {
+	id := "https://idp.example.org/idp"
+	h := NewHandler(repo.New([]string{id}))
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/entities", nil)
+	req.Header.Set("Accept", "application/samlmetadata+xml")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Host", "mdq.proxy.example.org")
+	req.Header.Set("X-Forwarded-Prefix", "/saml")
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `Name="https://mdq.proxy.example.org/saml/entities"`) {
+		t.Fatalf("expected @Name from proxy headers, got:\n%s", body)
+	}
+}
+
+func TestAggregateXMLCacheDurationAndValidUntilAttributes(t *testing.T) {
+	id := "https://idp.example.org/idp"
+	h := NewHandler(repo.New([]string{id}),
+		WithAggregateConfig(pipeline.AggregateConfig{
+			Name:          "https://example.org/fed",
+			CacheDuration: "PT2H",
+			ValidUntil:    "P7D",
+		}),
+	)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/entities", nil)
+	req.Header.Set("Accept", "application/samlmetadata+xml")
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `cacheDuration="PT2H"`) {
+		t.Errorf("expected cacheDuration attribute, got:\n%s", body)
+	}
+	if !strings.Contains(body, `validUntil="P7D"`) {
+		t.Errorf("expected validUntil attribute, got:\n%s", body)
+	}
+}
+
+func TestAggregateXMLCacheControlHeaderFromCacheDuration(t *testing.T) {
+	id := "https://idp.example.org/idp"
+	h := NewHandler(repo.New([]string{id}),
+		WithAggregateConfig(pipeline.AggregateConfig{CacheDuration: "PT1H"}),
+	)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/entities", nil)
+	req.Header.Set("Accept", "application/samlmetadata+xml")
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	cc := rr.Header().Get("Cache-Control")
+	if cc != "max-age=3600" {
+		t.Fatalf("expected Cache-Control: max-age=3600, got %q", cc)
+	}
+}
+
+func TestEntityLookupXMLCacheControlFromCacheDuration(t *testing.T) {
+	id := "https://idp.example.org/idp"
+	h := NewHandler(repo.New([]string{id}),
+		WithAggregateConfig(pipeline.AggregateConfig{CacheDuration: "PT30M"}),
+	)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/entities/"+url.PathEscape(id)+".xml", nil)
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	cc := rr.Header().Get("Cache-Control")
+	if cc != "max-age=1800" {
+		t.Fatalf("expected Cache-Control: max-age=1800 on entity lookup, got %q", cc)
+	}
+}
+
+func TestWithRequestCountersSharesCounters(t *testing.T) {
+	var c RequestCounters
+	h := NewHandler(repo.New(nil), WithRequestCounters(&c))
+
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", nil))
+
+	if c.RequestsTotal.Load() != 2 {
+		t.Fatalf("expected 2 total requests via shared counter, got %d", c.RequestsTotal.Load())
 	}
 }

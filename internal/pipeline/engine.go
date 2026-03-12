@@ -1327,7 +1327,7 @@ func runPublish(cfg PublishStep, outputDir string, current []string, currentXML 
 		return fmt.Errorf("create publish output directory: %w", err)
 	}
 
-	body, err := formatOutput(path, current, fin, signCfg, verifyCfg, first)
+	body, err := formatOutput(path, current, currentXML, fin, signCfg, verifyCfg, first)
 	if err != nil {
 		return err
 	}
@@ -1436,24 +1436,24 @@ func runPublishDir(cfg PublishStep, outputDir string, current []string, currentX
 	return nil
 }
 
-func formatOutput(path string, current []string, fin FinalizeStep, signCfg SignStep, verifyCfg VerifyStep, first bool) ([]byte, error) {
+func formatOutput(path string, current []string, currentXML map[string]string, fin FinalizeStep, signCfg SignStep, verifyCfg VerifyStep, first bool) ([]byte, error) {
 	hasSign := signCfg.Key != "" || signCfg.Cert != "" || signCfg.PKCS11 != nil
 	hasVerify := verifyCfg.Cert != ""
 
 	if strings.HasSuffix(strings.ToLower(path), ".xml") {
 		var b []byte
-		var err error
 		if first && len(current) == 1 {
+			var err error
 			b, err = renderEntityXML(current[0])
+			if err != nil {
+				return nil, err
+			}
 		} else {
-			b, err = renderEntitiesXML(current, AggregateConfig{
+			b = BuildEntitiesXML(current, currentXML, AggregateConfig{
 				Name:          fin.Name,
 				CacheDuration: fin.CacheDuration,
 				ValidUntil:    fin.ValidUntil,
 			})
-		}
-		if err != nil {
-			return nil, err
 		}
 
 		if hasSign {
@@ -1463,6 +1463,7 @@ func formatOutput(path string, current []string, fin FinalizeStep, signCfg SignS
 			if signCfg.Key == "" && signCfg.PKCS11 == nil {
 				return nil, fmt.Errorf("sign requires either key or pkcs11 configuration")
 			}
+			var err error
 			b, err = signXMLDocument(b, signCfg)
 			if err != nil {
 				return nil, err
@@ -1490,46 +1491,6 @@ func formatOutput(path string, current []string, fin FinalizeStep, signCfg SignS
 		body += "\n"
 	}
 	return []byte(body), nil
-}
-
-// renderEntitiesXML renders an md:EntitiesDescriptor containing one stub
-// EntityDescriptor per entity ID (no body XML).  Used by the publish path.
-// cfg.ValidUntil is resolved via ResolveValidUntil so "+48h" syntax works.
-func renderEntitiesXML(current []string, cfg AggregateConfig) ([]byte, error) {
-	type entityDescriptor struct {
-		EntityID string `xml:"entityID,attr"`
-	}
-	type entitiesDescriptor struct {
-		XMLName       xml.Name           `xml:"md:EntitiesDescriptor"`
-		XMLNSMD       string             `xml:"xmlns:md,attr"`
-		Name          string             `xml:"Name,attr,omitempty"`
-		CacheDuration string             `xml:"cacheDuration,attr,omitempty"`
-		ValidUntil    string             `xml:"validUntil,attr,omitempty"`
-		Entities      []entityDescriptor `xml:"md:EntityDescriptor"`
-	}
-
-	doc := entitiesDescriptor{
-		XMLNSMD:       "urn:oasis:names:tc:SAML:2.0:metadata",
-		Name:          cfg.Name,
-		CacheDuration: cfg.CacheDuration,
-		ValidUntil:    ResolveValidUntil(cfg.ValidUntil),
-		Entities:      make([]entityDescriptor, 0, len(current)),
-	}
-
-	for _, id := range current {
-		doc.Entities = append(doc.Entities, entityDescriptor{EntityID: id})
-	}
-
-	b, err := xml.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("marshal xml output: %w", err)
-	}
-
-	var out bytes.Buffer
-	out.WriteString(xml.Header)
-	out.Write(b)
-	out.WriteString("\n")
-	return out.Bytes(), nil
 }
 
 func renderEntityXML(entityID string) ([]byte, error) {

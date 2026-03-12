@@ -1,0 +1,9 @@
+- load:
+    entities:
+      - https://idp.example.org/idp
+      - https://sp.example.org/sp
+- fork:
+    - publish:
+        output: fork-only.txt
+- publish:
+    output: after-fork.txt

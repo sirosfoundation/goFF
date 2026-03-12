@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1710,4 +1711,242 @@ func testMetadataXMLWithCategories() string {
 		</md:Extensions>
 	</md:EntityDescriptor>
 </md:EntitiesDescriptor>`
+}
+
+// ---------------------------------------------------------------------------
+// Fork / pipe / parsecopy
+// ---------------------------------------------------------------------------
+
+func TestExecuteForkDoesNotModifyOuterState(t *testing.T) {
+	p := File{
+		Pipeline: []Step{
+			{Action: "load", Load: LoadStep{Entities: []string{
+				"https://idp.example.org/idp",
+				"https://sp.example.org/sp",
+			}}},
+			{Action: "fork", Fork: ForkStep{Pipeline: []Step{
+				// inside fork: select only the IDP then publish
+				{Action: "select", Select: SelectStep{Entities: []string{"https://idp.example.org/idp"}}},
+				{Action: "publish", Publish: PublishStep{Output: "fork-idp.txt"}},
+			}}},
+			// outer state must still have both entities
+			{Action: "publish", Publish: PublishStep{Output: "outer.txt"}},
+		},
+	}
+
+	outDir := t.TempDir()
+	res, err := Execute(p, outDir)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	// Outer result: both entities.
+	if len(res.Entities) != 2 {
+		t.Fatalf("expected 2 outer entities after fork, got %d: %v", len(res.Entities), res.Entities)
+	}
+
+	// Fork output: only the IDP.
+	forkOut, err := os.ReadFile(filepath.Join(outDir, "fork-idp.txt"))
+	if err != nil {
+		t.Fatalf("fork output not written: %v", err)
+	}
+	forkLines := strings.TrimSpace(string(forkOut))
+	if forkLines != "https://idp.example.org/idp" {
+		t.Fatalf("unexpected fork output: %q", forkLines)
+	}
+
+	// Outer output: both entities.
+	outerOut, err := os.ReadFile(filepath.Join(outDir, "outer.txt"))
+	if err != nil {
+		t.Fatalf("outer output not written: %v", err)
+	}
+	if !strings.Contains(string(outerOut), "https://idp.example.org/idp") ||
+		!strings.Contains(string(outerOut), "https://sp.example.org/sp") {
+		t.Fatalf("unexpected outer output: %q", string(outerOut))
+	}
+}
+
+func TestExecutePipeAlsoDoesNotModifyOuterState(t *testing.T) {
+	p := File{
+		Pipeline: []Step{
+			{Action: "load", Load: LoadStep{Entities: []string{
+				"https://idp.example.org/idp",
+				"https://sp.example.org/sp",
+			}}},
+			{Action: "pipe", Fork: ForkStep{Pipeline: []Step{
+				{Action: "select", Select: SelectStep{Entities: []string{"https://sp.example.org/sp"}}},
+				{Action: "publish", Publish: PublishStep{Output: "pipe-sp.txt"}},
+			}}},
+			{Action: "publish", Publish: PublishStep{Output: "outer.txt"}},
+		},
+	}
+
+	outDir := t.TempDir()
+	res, err := Execute(p, outDir)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	if len(res.Entities) != 2 {
+		t.Fatalf("expected 2 outer entities after pipe, got %d", len(res.Entities))
+	}
+
+	pipeOut, err := os.ReadFile(filepath.Join(outDir, "pipe-sp.txt"))
+	if err != nil {
+		t.Fatalf("pipe output not written: %v", err)
+	}
+	if strings.TrimSpace(string(pipeOut)) != "https://sp.example.org/sp" {
+		t.Fatalf("unexpected pipe output: %q", string(pipeOut))
+	}
+}
+
+func TestExecuteForkViaBatchFixture(t *testing.T) {
+	fixture := filepath.Join("..", "..", "tests", "fixtures", "pipelines", "fork-batch.yaml")
+	p, err := ParseFile(fixture)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+
+	outDir := t.TempDir()
+	res, err := Execute(p, outDir)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	if len(res.Entities) != 2 {
+		t.Fatalf("expected 2 entities after fork, got %d", len(res.Entities))
+	}
+
+	// fork-only.txt produced inside the fork sub-pipeline.
+	if _, err := os.ReadFile(filepath.Join(outDir, "fork-only.txt")); err != nil {
+		t.Fatalf("fork sub-pipeline output not written: %v", err)
+	}
+
+	// after-fork.txt produced by the outer pipeline.
+	if _, err := os.ReadFile(filepath.Join(outDir, "after-fork.txt")); err != nil {
+		t.Fatalf("outer output not written after fork: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// XML aggregate with real entity bodies
+// ---------------------------------------------------------------------------
+
+func TestExecuteFinalizePublishesXMLAggregateWithBodies(t *testing.T) {
+	fixture := filepath.Join("..", "..", "tests", "fixtures", "pipelines", "select-by-role-idp.yaml")
+	p, err := ParseFile(fixture)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+
+	// Append a finalize + xml publish step.
+	p.Pipeline = append(p.Pipeline, Step{
+		Action: "finalize",
+		Finalize: FinalizeStep{
+			Name:          "https://example.org/test",
+			CacheDuration: "PT1H",
+		},
+	}, Step{
+		Action:  "publish",
+		Publish: PublishStep{Output: "aggregate.xml"},
+	})
+
+	outDir := t.TempDir()
+	_, err = Execute(p, outDir)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	b, err := os.ReadFile(filepath.Join(outDir, "aggregate.xml"))
+	if err != nil {
+		t.Fatalf("aggregate.xml not written: %v", err)
+	}
+
+	out := string(b)
+	if !strings.Contains(out, "EntitiesDescriptor") {
+		t.Errorf("expected EntitiesDescriptor wrapper, got:\n%s", out)
+	}
+	// select-predicates.xml contains IDPSSODescriptor elements — verify body is embedded.
+	if !strings.Contains(out, "IDPSSODescriptor") {
+		t.Errorf("expected full entity XML body (IDPSSODescriptor) in published aggregate, got:\n%s", out)
+	}
+	if !strings.Contains(out, `Name="https://example.org/test"`) {
+		t.Errorf("expected Name attribute on aggregate, got:\n%s", out)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// resolveSourcePaths unit tests
+// ---------------------------------------------------------------------------
+
+func TestResolveSourcePathsEmptyBaseDir(t *testing.T) {
+	src := Source{Files: []string{"relative/path.xml"}, Verify: "cert.pem"}
+	got := resolveSourcePaths(src, "")
+	if got.Files[0] != "relative/path.xml" {
+		t.Fatalf("expected path unchanged with empty baseDir, got %q", got.Files[0])
+	}
+	if got.Verify != "cert.pem" {
+		t.Fatalf("expected verify unchanged with empty baseDir, got %q", got.Verify)
+	}
+}
+
+func TestResolveSourcePathsRelativeFile(t *testing.T) {
+	src := Source{Files: []string{"metadata.xml"}}
+	got := resolveSourcePaths(src, "/base/dir")
+	want := "/base/dir/metadata.xml"
+	if got.Files[0] != want {
+		t.Fatalf("expected %q got %q", want, got.Files[0])
+	}
+}
+
+func TestResolveSourcePathsAbsoluteFileUnchanged(t *testing.T) {
+	src := Source{Files: []string{"/abs/metadata.xml"}}
+	got := resolveSourcePaths(src, "/base/dir")
+	if got.Files[0] != "/abs/metadata.xml" {
+		t.Fatalf("expected absolute path unchanged, got %q", got.Files[0])
+	}
+}
+
+func TestResolveSourcePathsRelativeVerify(t *testing.T) {
+	src := Source{Verify: "cert.pem"}
+	got := resolveSourcePaths(src, "/base/dir")
+	want := "/base/dir/cert.pem"
+	if got.Verify != want {
+		t.Fatalf("expected %q got %q", want, got.Verify)
+	}
+}
+
+func TestResolveSourcePathsAbsoluteVerifyUnchanged(t *testing.T) {
+	src := Source{Verify: "/certs/cert.pem"}
+	got := resolveSourcePaths(src, "/base/dir")
+	if got.Verify != "/certs/cert.pem" {
+		t.Fatalf("expected absolute verify path unchanged, got %q", got.Verify)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// XSLT
+// ---------------------------------------------------------------------------
+
+func TestExecuteXSLTTransformsEntities(t *testing.T) {
+	if _, err := exec.LookPath("xsltproc"); err != nil {
+		t.Skip("xsltproc not available; skipping XSLT test")
+	}
+
+	fixture := filepath.Join("..", "..", "tests", "fixtures", "pipelines", "xslt-batch.yaml")
+	p, err := ParseFile(fixture)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+
+	outDir := t.TempDir()
+	res, err := Execute(p, outDir)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	// select-fed-a.xml has 2 entities; identity transform should preserve them.
+	if len(res.Entities) == 0 {
+		t.Fatal("expected entities after XSLT transform, got none")
+	}
 }

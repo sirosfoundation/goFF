@@ -1,0 +1,6 @@
+- load:
+    files:
+      - ../metadata/select-fed-a.xml
+- xslt: ../metadata/identity.xsl
+- publish:
+    output: xslt-out.txt
