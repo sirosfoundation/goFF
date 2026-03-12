@@ -33,21 +33,7 @@ func TestRunServerServesHealthz(t *testing.T) {
 		errCh <- RunServer(ctx, ServerOptions{PipelinePath: fixture, ListenAddr: addr})
 	}()
 
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		resp, reqErr := http.Get(fmt.Sprintf("http://%s/healthz", addr))
-		if reqErr == nil {
-			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				break
-			}
-		}
-
-		if time.Now().After(deadline) {
-			t.Fatal("server did not become healthy in time")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitHTTP(t, fmt.Sprintf("http://%s/healthz", addr), 10*time.Second)
 
 	readyResp, err := http.Get(fmt.Sprintf("http://%s/readyz", addr))
 	if err != nil {
@@ -337,6 +323,75 @@ func contains(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func TestRunServerMetricsRefreshLastError(t *testing.T) {
+	metadataPath := filepath.Join(t.TempDir(), "metadata.xml")
+	pipelinePath := filepath.Join(t.TempDir(), "pipeline.yaml")
+	writeFile(t, metadataPath, metadataXML("https://idp.example.org/idp"))
+	writeFile(t, pipelinePath, fmt.Sprintf(`- load:
+    files:
+      - %s
+`, metadataPath))
+
+	addr := reserveAddr(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunServer(ctx, ServerOptions{
+			PipelinePath: pipelinePath,
+			ListenAddr:   addr,
+			RefreshEvery: 50 * time.Millisecond,
+		})
+	}()
+
+	waitHTTP(t, fmt.Sprintf("http://%s/healthz", addr), 2*time.Second)
+
+	// Overwrite pipeline with malformed YAML so the next refresh cycle fails
+	// to parse it and stores a non-empty last_error.
+	writeFile(t, pipelinePath, "this: is: : not: valid: yaml!")
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		resp, err := http.Get(fmt.Sprintf("http://%s/metrics", addr))
+		if err != nil {
+			t.Fatalf("failed calling /metrics: %v", err)
+		}
+		var body map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		_ = resp.Body.Close()
+
+		refresh, _ := body["refresh"].(map[string]any)
+		lastErr, _ := refresh["last_error"].(string)
+		if lastErr != "" {
+			return // last_error populated as expected
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("last_error never populated in /metrics refresh section; got: %#v", refresh)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// waitHTTP polls addr until a 200 is returned or the timeout expires.
+func waitHTTP(t *testing.T, url string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		resp, err := http.Get(url)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("server at %s did not become healthy within timeout", url)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func writeFile(t *testing.T, path string, content string) {

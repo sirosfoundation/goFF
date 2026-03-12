@@ -1,7 +1,9 @@
 package mdq
 
 import (
+	"crypto/sha1"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -359,3 +361,84 @@ func TestCacheHeadersFromRFC3339ValidUntil(t *testing.T) {
 		t.Fatalf("expected Cache-Control max-age from RFC3339 ValidUntil, got %q", cc)
 	}
 }
+
+func TestEntityLookupBySHA1(t *testing.T) {
+	id := "https://idp.example.org/idp"
+	xmlBody := `<?xml version="1.0" encoding="UTF-8"?><md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="` + id + `"/>`
+	h := NewHandler(repo.New([]string{id}, map[string]string{id: xmlBody}))
+
+	h1 := sha1.Sum([]byte(id)) //nolint:gosec
+	sha1Hex := fmt.Sprintf("{sha1}%x", h1[:])
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/entities/"+url.PathEscape(sha1Hex)+".xml", nil)
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for SHA1 lookup, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), id) {
+		t.Fatalf("expected entity body to contain entity ID, got:\n%s", rr.Body.String())
+	}
+}
+
+func TestEntityLookupBySHA1NotFound(t *testing.T) {
+	h := NewHandler(repo.New([]string{"https://idp.example.org/idp"}))
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/entities/%7Bsha1%7D0000000000000000000000000000000000000000", nil)
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown SHA1, got %d", rr.Code)
+	}
+}
+
+func TestEntityLookupXMLETag(t *testing.T) {
+	id := "https://idp.example.org/idp"
+	xmlBody := `<?xml version="1.0" encoding="UTF-8"?><md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="` + id + `"/>`
+	h := NewHandler(repo.New([]string{id}, map[string]string{id: xmlBody}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/entities/"+url.PathEscape(id)+".xml", nil)
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	etag := rr.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("expected ETag header on XML entity response")
+	}
+
+	// Second request with matching If-None-Match should 304.
+	rr2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/entities/"+url.PathEscape(id)+".xml", nil)
+	req2.Header.Set("If-None-Match", etag)
+	h.ServeHTTP(rr2, req2)
+
+	if rr2.Code != http.StatusNotModified {
+		t.Fatalf("expected 304 when If-None-Match matches ETag, got %d", rr2.Code)
+	}
+	if rr2.Body.Len() != 0 {
+		t.Fatalf("expected empty body on 304, got %d bytes", rr2.Body.Len())
+	}
+}
+
+func TestEntityLookupXMLETagMismatchReturnsFullBody(t *testing.T) {
+	id := "https://idp.example.org/idp"
+	xmlBody := `<?xml version="1.0" encoding="UTF-8"?><md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="` + id + `"/>`
+	h := NewHandler(repo.New([]string{id}, map[string]string{id: xmlBody}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/entities/"+url.PathEscape(id)+".xml", nil)
+	req.Header.Set("If-None-Match", `"stale-etag"`)
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 when If-None-Match does not match, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "EntityDescriptor") {
+		t.Fatalf("expected full body on ETag mismatch, got:\n%s", rr.Body.String())
+	}
+}
+

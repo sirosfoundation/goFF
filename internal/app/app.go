@@ -46,6 +46,7 @@ type serverRuntimeMetrics struct {
 	refreshSuccessTotal atomic.Uint64
 	refreshFailureTotal atomic.Uint64
 	lastRefreshUnix     atomic.Int64
+	lastRefreshError    atomic.Value // stores string; empty means last refresh succeeded
 }
 
 // RunBatch validates input, parses the pipeline, and executes it in batch mode.
@@ -118,10 +119,11 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 					"ready": metrics.ready.Load(),
 				},
 				"refresh": map[string]any{
-					"success_total":  metrics.refreshSuccessTotal.Load(),
-					"failure_total":  metrics.refreshFailureTotal.Load(),
-					"last_refresh_unix": metrics.lastRefreshUnix.Load(),
-					"entity_count":   len(r.List()),
+				"success_total":     metrics.refreshSuccessTotal.Load(),
+				"failure_total":     metrics.refreshFailureTotal.Load(),
+				"last_refresh_unix": metrics.lastRefreshUnix.Load(),
+				"entity_count":      len(r.List()),
+				"last_error":        func() string { s, _ := metrics.lastRefreshError.Load().(string); return s }(),
 				},
 			}
 		}),
@@ -169,15 +171,17 @@ func runRefreshLoop(ctx context.Context, r *repo.Repository, pipelinePath string
 			if err != nil {
 				if metrics != nil {
 					metrics.refreshFailureTotal.Add(1)
+					metrics.lastRefreshError.Store(err.Error())
 				}
 				log.Printf("goff refresh error: %v", err)
 				continue
 			}
 
-				r.Replace(res.Entities, res.EntityXML)
+			r.Replace(res.Entities, res.EntityXML)
 			if metrics != nil {
 				metrics.refreshSuccessTotal.Add(1)
 				metrics.lastRefreshUnix.Store(time.Now().Unix())
+				metrics.lastRefreshError.Store("")
 			}
 			log.Printf("goff refresh complete: entities=%d", len(res.Entities))
 		}

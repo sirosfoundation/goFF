@@ -1,6 +1,8 @@
 package mdq
 
 import (
+	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -191,6 +193,11 @@ func NewHandler(r *repo.Repository, opts ...HandlerOption) http.Handler {
 			return
 		}
 
+		// Support pyFF MDQ {sha1}HEXHASH lookup form.
+		if resolved, ok := resolveSHA1EntityID(entityID, r); ok {
+			entityID = resolved
+		}
+
 		if !r.Has(entityID) {
 			cfg.requestCounters.EntityLookupNotFound.Add(1)
 			http.Error(w, "entity not found", http.StatusNotFound)
@@ -205,11 +212,19 @@ func NewHandler(r *repo.Repository, opts ...HandlerOption) http.Handler {
 		case "xml":
 			setCacheHeaders(w, cfg.aggregateCfg)
 			w.Header().Set("Content-Type", "application/samlmetadata+xml")
+			var xmlBody string
 			if body, ok := r.Get(entityID); ok {
-				_, _ = w.Write([]byte(body))
+				xmlBody = body
 			} else {
-				_, _ = w.Write([]byte(renderEntityXML(entityID)))
+				xmlBody = renderEntityXML(entityID)
 			}
+			etag := entityETag(xmlBody)
+			w.Header().Set("ETag", etag)
+			if req.Header.Get("If-None-Match") == etag {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			_, _ = w.Write([]byte(xmlBody))
 		default:
 			cfg.requestCounters.EntityLookupNotAccept.Add(1)
 			http.Error(w, "not acceptable", http.StatusNotAcceptable)
@@ -264,6 +279,34 @@ func resolveListFormat(accept string) string {
 		return "xml"
 	}
 	return ""
+}
+
+// resolveSHA1EntityID resolves a pyFF MDQ-style {sha1}HEXHASH URI to the
+// stored entity ID by computing SHA1 over each known ID.  Returns ("", false)
+// if the path does not use the {sha1} prefix or no match is found.
+func resolveSHA1EntityID(path string, r *repo.Repository) (string, bool) {
+	const prefix = "{sha1}"
+	if !strings.HasPrefix(path, prefix) {
+		return "", false
+	}
+	wantHex := strings.ToLower(strings.TrimSpace(path[len(prefix):]))
+	if wantHex == "" {
+		return "", false
+	}
+	for _, id := range r.List() {
+		h := sha1.Sum([]byte(id)) //nolint:gosec // SHA1 used only for MDQ URL matching, not security
+		if fmt.Sprintf("%x", h[:]) == wantHex {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+// entityETag returns a quoted ETag value for an XML entity body derived from
+// the first 8 bytes of its SHA-256 digest.
+func entityETag(body string) string {
+	h := sha256.Sum256([]byte(body))
+	return fmt.Sprintf(`"%x"`, h[:8])
 }
 
 func renderEntityXML(entityID string) string {
