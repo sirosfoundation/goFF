@@ -1,0 +1,55 @@
+# Equivalent to pyFF: edugain-mdq.fd / batch-mdq-loop.fd (when update portion)
+#
+# goFF MDQ server update pipeline.  Load metadata from federation sources,
+# select all entities, then fork into three output branches:
+#
+#   1. Signed and finalized XML aggregate (for clients that fetch the
+#      full aggregate directly).
+#   2. Per-entity XML files in a hash-link directory tree (for MDQ clients
+#      that use /entities/{id} or /entities/{sha1}HASH lookups).
+#   3. Discovery Service JSON (for embedded DS / WAYF implementations).
+#
+# This pipeline is intended for use with `goff server`:
+#   goff server --pipeline mdq-server-pipeline.yaml --listen :8080
+#
+# The `when update:` wrapper is optional when running with `goff server`
+# (the server only executes update-scope steps) but makes the intent
+# explicit and allows a dry-run with `goff batch` as well.
+#
+# REQUIREMENTS: replace sign.key / sign.crt with real file paths, and
+# set Name to the externally-visible base URL of your MDQ service.
+
+- when update:
+    - load:
+        urls:
+          - https://mds.edugain.org
+          - https://mds.swamid.se/md/swamid-2.0.xml
+        retries: 3
+
+    - select
+
+    # Fork 1: finalized + signed full XML aggregate.
+    - fork:
+        - finalize:
+            Name: https://mdq.example.org/entities
+            cacheDuration: PT5H
+            validUntil: P10D
+        - sign:
+            key: sign.key
+            cert: sign.crt
+        - publish:
+            output: /tmp/mdq/aggregate.xml
+
+    # Fork 2: per-entity files for MDQ /entities/{id} lookups.
+    # hash_link: true writes a {sha256}.xml sidecar alongside each
+    # entity file so that goFF's built-in {sha1} lookup can resolve
+    # requests of the form /entities/{sha1}HEXHASH.
+    - fork:
+        - publish:
+            dir: /tmp/mdq/entities
+            hash_link: true
+
+    # Fork 3: Discovery Service JSON for embedded DS implementations.
+    - fork:
+        - discojson:
+            output: /tmp/mdq/disco.json

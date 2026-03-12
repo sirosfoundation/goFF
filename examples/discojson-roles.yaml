@@ -1,0 +1,27 @@
+# Equivalent to pyFF: edugain-discojson_sp.yaml / edugain-disco.yaml
+#
+# Load a federation, select all entities, then produce separate Discovery
+# JSON files for IDP-role and SP-role entities.
+#
+# discojson_idp and discojson_sp are goFF variants that filter by role
+# before producing the JSON, equivalent to pyFF's discojson_idp / discojson_sp.
+# Use a fork so both outputs are produced from the same full working set.
+#
+# Usage:
+#   goff batch --pipeline discojson-roles.yaml --output /tmp/out
+
+- load:
+    urls:
+      - https://mds.edugain.org
+      - https://mds.swamid.se/md/swamid-2.0.xml
+
+- select
+
+# Produce IDP-role discovery JSON in a fork (sandboxed copy of working set).
+- fork:
+    - discojson_idp:
+        output: /tmp/idps.json
+
+# Produce SP-role discovery JSON from the full working set.
+- discojson_sp:
+    output: /tmp/sps.json

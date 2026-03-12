@@ -1,0 +1,21 @@
+# Equivalent to pyFF: expiration.fd
+#
+# Load a federation, select all entities, print an entity count, report on
+# all embedded X.509 certificate expiry dates (certreport prints a
+# tab-separated table to stdout), and publish an annotated aggregate.
+#
+# Usage:
+#   goff batch --pipeline certreport.yaml --output /tmp/out
+
+- load:
+    urls:
+      - https://mds.swamid.se/md/swamid-2.0.xml
+
+- select
+
+- stats
+
+- certreport
+
+- publish:
+    output: /tmp/swamid-annotated.xml

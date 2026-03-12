@@ -1,0 +1,29 @@
+# Equivalent to pyFF: renater.fd / safire-fed.fd
+#
+# Load federation metadata from multiple sources, select all entities,
+# sign the combined XML aggregate, inspect certificate expiry, print a
+# summary count, and publish the signed output.
+#
+# REQUIREMENTS: replace sign.key / sign.crt with real file paths before
+# running.
+#
+# Usage:
+#   goff batch --pipeline sign-publish.yaml --output /tmp/out
+
+- load:
+    urls:
+      - https://metadata.federation.renater.fr/renater/main/main-all-renater-metadata.xml
+      - https://metadata.federation.renater.fr/renater/main/main-all-edugain-metadata.xml
+
+- select
+
+- sign:
+    key: sign.key
+    cert: sign.crt
+
+- certreport
+
+- stats
+
+- publish:
+    output: /tmp/renater-signed.xml

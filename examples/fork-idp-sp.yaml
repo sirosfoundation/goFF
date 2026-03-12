@@ -1,0 +1,46 @@
+# Equivalent to pyFF: edugain-fork.fd
+#
+# Load a federation aggregate, select all entities, then fork into two
+# independently signed and published outputs: one for SP-role entities
+# and one for IDP-role entities.  The main pipeline continues to print
+# a certificate report and entity count after both forks complete.
+#
+# Each fork runs as a sandboxed copy of the working set; changes inside
+# a fork do not affect the outer pipeline.
+#
+# REQUIREMENTS: replace sign.key / sign.crt with real file paths before
+# running.  The key must be an RSA or ECDSA PEM private key; the cert
+# must be the matching PEM certificate.
+#
+# Usage:
+#   goff batch --pipeline fork-idp-sp.yaml --output /tmp/out
+
+- load:
+    urls:
+      - https://mds.edugain.org
+
+- select
+
+# Fork 1: select SP-role entities, sign, publish.
+- fork:
+    - select:
+        selector: "!//md:EntityDescriptor[md:SPSSODescriptor]"
+    - sign:
+        key: sign.key
+        cert: sign.crt
+    - publish:
+        output: /tmp/idfed-sp.xml
+
+# Fork 2: select IDP-role entities, sign, publish.
+- fork:
+    - select:
+        selector: "!//md:EntityDescriptor[md:IDPSSODescriptor]"
+    - sign:
+        key: sign.key
+        cert: sign.crt
+    - publish:
+        output: /tmp/idfed-idp.xml
+
+- certreport
+
+- stats

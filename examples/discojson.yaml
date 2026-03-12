@@ -1,0 +1,23 @@
+# Equivalent to pyFF: dj.fd / edugain-json.fd
+#
+# Load several federation feeds, select all entities, and produce a
+# Discovery Service JSON file suitable for use with embedded DS or WAYF
+# implementations.
+#
+# pyFF used a separate `print: output:` step to write discojson output;
+# goFF's discojson step writes directly to the specified output path.
+#
+# Usage:
+#   goff batch --pipeline discojson.yaml --output /tmp/out
+
+- load:
+    urls:
+      - https://mds.edugain.org
+      - https://mds.swamid.se/md/swamid-2.0.xml
+      - https://md.incommon.org/InCommon/InCommon-metadata.xml
+      - https://fed.openathens.net/oafed/metadata
+
+- select
+
+- discojson:
+    output: /tmp/metadata.json

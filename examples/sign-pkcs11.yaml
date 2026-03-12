@@ -1,0 +1,42 @@
+# Equivalent to pyFF: p11.fd
+#
+# Load a federation aggregate, optionally verifying its XML signature
+# against a known signing certificate, select only IDP-role entities,
+# sign the output using a PKCS#11 hardware security module (HSM), and
+# publish.
+#
+# The `verify` field in the load step points to a PEM certificate file
+# that will be used to verify the aggregate's XML signature before
+# ingesting it.  This is the goFF equivalent of pyFF's inline
+# fingerprint notation:
+#   - https://url A6:78:5A:...
+#
+# REQUIREMENTS:
+#   - Replace verify, key, and output paths with real values.
+#   - The PKCS#11 URI format is:
+#       pkcs11:///path/to/libpkcs11.so/label
+#     For SoftHSM2:
+#       pkcs11:///usr/lib/softhsm/libsofthsm2.so/signer
+#   - Ensure the PKCS#11 library and token are accessible at runtime.
+#
+# Usage:
+#   goff batch --pipeline sign-pkcs11.yaml --output /tmp/out
+
+- load:
+    urls:
+      - https://mds.swamid.se/md/swamid-2.0.xml
+    # Verify the aggregate's XML signature against this certificate file.
+    # Remove or set to "" to skip signature verification.
+    verify: /path/to/swamid-signing.crt
+
+- select:
+    selector: "!//md:EntityDescriptor[md:IDPSSODescriptor]"
+
+- sign:
+    # PKCS#11 URI: pkcs11:///path/to/library.so/token-label
+    key: "pkcs11:///usr/lib/softhsm/libsofthsm2.so/signer"
+
+- publish:
+    output: /tmp/idp-signed.xml
+
+- stats

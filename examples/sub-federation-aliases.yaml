@@ -1,0 +1,60 @@
+# Equivalent to pyFF: test.fd / edugain-copy.fd (when update portion)
+#
+# Load a federation, create the full-set alias, then derive named
+# sub-federation aliases for IDPs, SPs, and a specific named entity.
+# Each alias can later be consumed via `load: files: [/alias]` in
+# another pipeline step or served as a named set by a goFF MDQ server.
+#
+# pyFF created these aliases inside `fork` + `break` branches so they
+# were accessible to the request pipeline.  In goFF the request path is
+# handled by the built-in MDQ server; sub-federation aliases are created
+# directly in the update pipeline (not inside forks) so they persist in
+# the pipeline state for the duration of the run.
+#
+# Usage:
+#   goff batch --pipeline sub-federation-aliases.yaml --output /tmp/out
+
+# Wrap in `when update:` so this pipeline can also be used with
+# `goff server --pipeline` without change.
+- when update:
+    # Load the main federation aggregate.
+    - load:
+        urls:
+          - https://mds.swamid.se/md/swamid-2.0.xml
+
+    # Snapshot the full loaded set as /swamid.
+    - select as /swamid:
+        selector: "//md:EntityDescriptor"
+
+    # Reload the full set and create a /swamid-idps alias (IDP-role only).
+    - load:
+        files:
+          - /swamid
+    - select as /swamid-idps:
+        selector: "//md:EntityDescriptor[md:IDPSSODescriptor]"
+
+    # Reload the full set and create a /swamid-sps alias (SP-role only).
+    - load:
+        files:
+          - /swamid
+    - select as /swamid-sps:
+        selector: "//md:EntityDescriptor[md:SPSSODescriptor]"
+
+    # Reload the full set and create a named alias for a single entity.
+    - load:
+        files:
+          - /swamid
+    - select as /ndn:
+        entities:
+          - https://idp.nordu.net/idp/shibboleth
+
+    # Restore the full working set so downstream steps see all entities.
+    - load:
+        files:
+          - /swamid
+
+    # Publish the complete aggregate as a convenience output.
+    - publish:
+        output: /tmp/swamid-all.xml
+
+    - stats

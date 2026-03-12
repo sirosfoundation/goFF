@@ -1,0 +1,26 @@
+# Equivalent to pyFF: edugain.fd / load.fd
+#
+# Load metadata from several federation sources, merge all entities into
+# a single working set, publish a combined XML aggregate, and print a
+# summary count.  Add or remove URLs under `urls:` to match your deployment.
+#
+# Usage:
+#   goff batch --pipeline multiple-federations.yaml --output /tmp/out
+
+- load:
+    urls:
+      - https://mds.edugain.org
+      - https://mds.swamid.se/md/swamid-2.0.xml
+      - https://md.incommon.org/InCommon/InCommon-metadata.xml
+      - https://haka.funet.fi/metadata/haka-metadata.xml
+      - https://metadata.federation.renater.fr/renater/main/main-all-renater-metadata.xml
+      - https://www.aai.dfn.de/fileadmin/metadata/DFN-AAI-metadata.xml
+      - https://metadata.eduid.cz/entities/eduid
+      - https://metadata.aai.switch.ch/metadata.switchaai.xml
+
+- select
+
+- publish:
+    output: /tmp/combined.xml
+
+- stats

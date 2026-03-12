@@ -1,0 +1,34 @@
+# Equivalent to pyFF: edugain-idps.fd / filter-idps.fd
+#
+# Load a federation aggregate and use a named source alias to select only
+# IDP-role entities via an XPath predicate.  The `select as /edugain` step
+# snapshots the full loaded set under the alias /edugain; the subsequent
+# `select` step restricts the working set to IDPs from that alias.
+#
+# In pyFF the equivalent XPath was expressed as:
+#   select: "/tmp/edugain!md:EntityDescriptor[md:IDPSSODescriptor]"
+# where /tmp/edugain was a pyFF store directory.  goFF uses in-pipeline
+# aliases instead of on-disk stores.
+#
+# Usage:
+#   goff batch --pipeline select-idps.yaml --output /tmp/out
+
+- load:
+    urls:
+      - https://mds.edugain.org
+
+# Snapshot all loaded entities under the alias /edugain so we can use
+# source-scoped XPath selection below.
+- select as /edugain:
+    selector: "//md:EntityDescriptor"
+
+# Select only IDP-role entities from the /edugain alias.
+- select:
+    selector: "/edugain!//md:EntityDescriptor[md:IDPSSODescriptor]"
+
+- certreport
+
+- publish:
+    output: /tmp/edugain-idps.xml
+
+- stats

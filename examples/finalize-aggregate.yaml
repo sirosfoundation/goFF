@@ -1,0 +1,56 @@
+# Equivalent to pyFF: ukmulti.fd
+#
+# Load metadata from multiple named sources, select only entities that
+# carry a specific registrationAuthority value from each source,
+# finalize the combined aggregate with standard metadata attributes,
+# sign, and publish.
+#
+# Pattern used here mirrors pyFF's per-source alias approach:
+#   1. Load source A → snapshot as /source-a alias.
+#   2. Load source B → snapshot as /source-b alias.
+#   3. Select from each alias using an XPath predicate that filters by
+#      registration authority.
+#   4. Finalize, sort, sign, publish.
+#
+# REQUIREMENTS: replace sign.key / sign.crt with real file paths.
+#
+# Usage:
+#   goff batch --pipeline finalize-aggregate.yaml --output /tmp/out
+
+# --- Load SWAMID and snapshot as /swamid ---
+- load:
+    urls:
+      - https://mds.swamid.se/md/swamid-2.0.xml
+
+- select as /swamid:
+    selector: "//md:EntityDescriptor"
+
+# --- Load InCommon and snapshot as /incommon ---
+- load:
+    urls:
+      - https://md.incommon.org/InCommon/InCommon-metadata.xml
+
+- select as /incommon:
+    selector: "//md:EntityDescriptor"
+
+# --- Select registration-authority-filtered entities from each source ---
+- select:
+    selectors:
+      - "/swamid!//md:EntityDescriptor[md:Extensions[mdrpi:RegistrationInfo[@registrationAuthority='http://www.swamid.se/']]]"
+      - "/incommon!//md:EntityDescriptor[md:Extensions[mdrpi:RegistrationInfo[@registrationAuthority='http://incommon.org']]]"
+
+- sort
+
+- finalize:
+    Name: https://metadata.example.org/
+    cacheDuration: PT6H
+    validUntil: P4D
+
+- sign:
+    key: sign.key
+    cert: sign.crt
+
+- publish:
+    output: /tmp/combined-signed.xml
+
+- stats

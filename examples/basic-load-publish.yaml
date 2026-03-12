@@ -1,0 +1,19 @@
+# Equivalent to pyFF: uk.fd
+#
+# Minimal pipeline: load a single federation aggregate, select all
+# entities into the working set, publish a combined XML aggregate, and
+# print a summary count.
+#
+# Usage:
+#   goff batch --pipeline basic-load-publish.yaml --output /tmp/out
+
+- load:
+    urls:
+      - https://metadata.ukfederation.org.uk/ukfederation-metadata.xml
+
+- select
+
+- publish:
+    output: /tmp/uk.xml
+
+- stats

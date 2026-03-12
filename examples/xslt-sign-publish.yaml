@@ -1,0 +1,34 @@
+# Equivalent to pyFF: kirei2.fd / filter-idps.fd (xslt variant)
+#
+# Load a metadata source, apply an XSLT stylesheet to tidy or transform
+# the XML (e.g. strip non-standard extensions, normalise namespaces),
+# select the resulting entities, sign, and publish.
+#
+# goFF delegates XSLT execution to the `xsltproc` binary (libxslt).
+# The stylesheet path is relative to the pipeline file's directory.
+#
+# REQUIREMENTS:
+#   - `xsltproc` must be installed (apt install xsltproc / brew install libxslt).
+#   - Place tidy.xsl in the same directory as this pipeline, or supply an
+#     absolute path.
+#   - Replace sign.key / sign.crt with real file paths.
+#
+# Usage:
+#   goff batch --pipeline xslt-sign-publish.yaml --output /tmp/out
+
+- load:
+    urls:
+      - https://idp.kirei.se/saml2/idp/metadata.php
+
+# Apply the tidy stylesheet to normalise namespace declarations and
+# remove non-standard extensions before further processing.
+- xslt: tidy.xsl
+
+- select
+
+- sign:
+    key: sign.key
+    cert: sign.crt
+
+- publish:
+    output: /tmp/idfed-test.xml
