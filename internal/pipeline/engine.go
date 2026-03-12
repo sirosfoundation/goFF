@@ -11,7 +11,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/beevik/etree"
+	"github.com/antchfx/xmlquery"
+	"github.com/antchfx/xpath"
 )
 
 // Result contains final in-memory entities after execution.
@@ -448,15 +449,15 @@ func evaluateSingleSelector(sel string, current []string, currentAttrs map[strin
 	}
 
 	if src, xp, ok := splitSourceXPath(sel); ok {
-		baseIDs, baseDocs, baseAttrs := resolveRepositorySource(src, current, currentAttrs, currentXML, sourceMap, sourceAttrs, sourceXML)
+		baseIDs, baseDocs, _ := resolveRepositorySource(src, current, currentAttrs, currentXML, sourceMap, sourceAttrs, sourceXML)
 		if len(baseIDs) == 0 {
 			return []string{}, true
 		}
-		return evaluateXPath(xp, baseIDs, baseDocs, baseAttrs), true
+		return evaluateXPath(xp, baseIDs, baseDocs), true
 	}
 
 	if strings.HasPrefix(sel, "//") {
-		return evaluateXPath(sel, current, currentXML, currentAttrs), true
+		return evaluateXPath(sel, current, currentXML), true
 	}
 
 	if ids, ok := sourceMap[sel]; ok {
@@ -534,201 +535,57 @@ func resolveRepositorySource(src string, current []string, currentAttrs map[stri
 	return append([]string(nil), ids...), cloneEntityXML(sourceXML[src]), cloneAttrs(sourceAttrs[src])
 }
 
-func evaluateXPath(xpath string, baseIDs []string, docs map[string]string, attrs map[string]EntityAttributes) []string {
-	container := etree.NewElement("md:EntitiesDescriptor")
-	container.CreateAttr("xmlns:md", "urn:oasis:names:tc:SAML:2.0:metadata")
-	for _, id := range baseIDs {
-		xmlBody, ok := docs[id]
-		if !ok || strings.TrimSpace(xmlBody) == "" {
-			container.CreateElement("md:EntityDescriptor").CreateAttr("entityID", id)
-			continue
-		}
-		doc := etree.NewDocument()
-		if err := doc.ReadFromString(xmlBody); err != nil || doc.Root() == nil {
-			container.CreateElement("md:EntityDescriptor").CreateAttr("entityID", id)
-			continue
-		}
-		container.AddChild(doc.Root().Copy())
-	}
+// samlNS maps the standard SAML metadata namespace prefixes to their URIs
+// for use with antchfx/xpath CompileWithNS.
+var samlNS = map[string]string{
+	"md":     "urn:oasis:names:tc:SAML:2.0:metadata",
+	"saml":   "urn:oasis:names:tc:SAML:2.0:assertion",
+	"mdrpi":  "urn:oasis:names:tc:SAML:metadata:rpi",
+	"mdattr": "urn:oasis:names:tc:SAML:metadata:attribute",
+	"mdui":   "urn:oasis:names:tc:SAML:metadata:ui",
+	"ds":     "http://www.w3.org/2000/09/xmldsig#",
+}
 
-	nodes, ok := safeFindElements(container, xpath)
-	if !ok {
-		return evaluateXPathFallback(xpath, baseIDs, attrs)
+// samlNSOpen / samlNSClose wrap XML fragments that may lack namespace
+// declarations (e.g. per-entity XML extracted from a parent EntitiesDescriptor)
+// so that xmlquery can resolve all common SAML namespace prefixes.
+const samlNSOpen = `<md:EntitiesDescriptor` +
+	` xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"` +
+	` xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"` +
+	` xmlns:mdrpi="urn:oasis:names:tc:SAML:metadata:rpi"` +
+	` xmlns:mdattr="urn:oasis:names:tc:SAML:metadata:attribute"` +
+	` xmlns:mdui="urn:oasis:names:tc:SAML:metadata:ui"` +
+	` xmlns:ds="http://www.w3.org/2000/09/xmldsig#">`
+const samlNSClose = `</md:EntitiesDescriptor>`
+
+func evaluateXPath(xpathExpr string, baseIDs []string, docs map[string]string) []string {
+	var buf strings.Builder
+	buf.WriteString(samlNSOpen)
+	for _, id := range baseIDs {
+		if xmlBody, ok := docs[id]; ok && strings.TrimSpace(xmlBody) != "" {
+			buf.WriteString(xmlBody)
+		} else {
+			fmt.Fprintf(&buf, `<md:EntityDescriptor entityID=%q/>`, id)
+		}
 	}
-	if len(nodes) == 0 {
+	buf.WriteString(samlNSClose)
+
+	expr, err := xpath.CompileWithNS(xpathExpr, samlNS)
+	if err != nil {
 		return []string{}
 	}
-
+	root, err := xmlquery.Parse(strings.NewReader(buf.String()))
+	if err != nil {
+		return []string{}
+	}
+	nodes := xmlquery.QuerySelectorAll(root, expr)
 	ids := make([]string, 0, len(nodes))
 	for _, n := range nodes {
-		if id := entityIDFromNode(n); id != "" {
+		if id := n.SelectAttr("entityID"); id != "" {
 			ids = append(ids, id)
 		}
 	}
 	return normalizeEntityIDs(ids)
-}
-
-func safeFindElements(root *etree.Element, xpath string) (out []*etree.Element, ok bool) {
-	defer func() {
-		if recover() != nil {
-			out = nil
-			ok = false
-		}
-	}()
-	out = root.FindElements(xpath)
-	return out, true
-}
-
-func evaluateXPathFallback(xpath string, baseIDs []string, attrs map[string]EntityAttributes) []string {
-	xpath = strings.TrimSpace(xpath)
-	if !strings.HasPrefix(xpath, "//md:EntityDescriptor") {
-		return []string{}
-	}
-	predicate := selectorPredicate(xpath)
-	if predicate == "" {
-		return normalizeEntityIDs(baseIDs)
-	}
-	out := make([]string, 0)
-	for _, eid := range baseIDs {
-		if selectorPredicateMatch(predicate, eid, attrs[eid]) {
-			out = append(out, eid)
-		}
-	}
-	return normalizeEntityIDs(out)
-}
-
-func selectorPredicate(sel string) string {
-	start := strings.Index(sel, "[")
-	end := strings.LastIndex(sel, "]")
-	if start < 0 || end < 0 || end <= start {
-		return ""
-	}
-	return strings.TrimSpace(sel[start+1 : end])
-}
-
-func selectorPredicateMatch(predicate string, entityID string, attr EntityAttributes) bool {
-	orTerms := splitPredicateTerms(predicate, " or ")
-	if len(orTerms) == 0 {
-		return false
-	}
-
-	for _, orTerm := range orTerms {
-		andTerms := splitPredicateTerms(orTerm, " and ")
-		if len(andTerms) == 0 {
-			continue
-		}
-
-		allTrue := true
-		for _, atom := range andTerms {
-			if !selectorAtomMatch(strings.TrimSpace(atom), entityID, attr) {
-				allTrue = false
-				break
-			}
-		}
-
-		if allTrue {
-			return true
-		}
-	}
-
-	return false
-}
-
-func splitPredicateTerms(expr string, sep string) []string {
-	terms := make([]string, 0)
-	for {
-		i := strings.Index(strings.ToLower(expr), sep)
-		if i < 0 {
-			if t := strings.TrimSpace(expr); t != "" {
-				terms = append(terms, t)
-			}
-			break
-		}
-		if t := strings.TrimSpace(expr[:i]); t != "" {
-			terms = append(terms, t)
-		}
-		expr = expr[i+len(sep):]
-	}
-	return terms
-}
-
-func selectorAtomMatch(atom string, entityID string, attr EntityAttributes) bool {
-	atom = strings.TrimSpace(strings.Trim(atom, "()"))
-	if atom == "" {
-		return false
-	}
-
-	switch atom {
-	case "md:IDPSSODescriptor":
-		return attr.HasRole("idp")
-	case "md:SPSSODescriptor":
-		return attr.HasRole("sp")
-	case "md:AttributeAuthorityDescriptor":
-		return attr.HasRole("aa")
-	case "md:AuthnAuthorityDescriptor":
-		return attr.HasRole("authn")
-	case "md:PDPDescriptor":
-		return attr.HasRole("pdp")
-	}
-
-	if strings.HasPrefix(atom, "@entityID=") {
-		if v, ok := quotedValue(atom); ok {
-			return entityID == v
-		}
-	}
-
-	if strings.Contains(atom, "RegistrationInfo/@registrationAuthority=") {
-		if v, ok := quotedValue(atom); ok {
-			return normalizeString(attr.RegistrationAuthority) == normalizeString(v)
-		}
-	}
-
-	if strings.Contains(atom, "entity-category") && strings.Contains(atom, "AttributeValue=") {
-		if v, ok := quotedValueAfter(atom, "AttributeValue="); ok {
-			return attr.HasCategory(v)
-		}
-	}
-
-	if strings.HasPrefix(strings.ToLower(atom), "contains(") {
-		q, ok := quotedValue(atom)
-		if !ok {
-			return false
-		}
-		return matchQuery(attr, entityID, q)
-	}
-
-	return false
-}
-
-func quotedValue(s string) (string, bool) {
-	start := strings.IndexAny(s, "'\"")
-	if start < 0 {
-		return "", false
-	}
-	quote := s[start]
-	end := strings.IndexByte(s[start+1:], quote)
-	if end < 0 {
-		return "", false
-	}
-	return s[start+1 : start+1+end], true
-}
-
-func quotedValueAfter(s string, marker string) (string, bool) {
-	i := strings.Index(s, marker)
-	if i < 0 {
-		return "", false
-	}
-	return quotedValue(s[i+len(marker):])
-}
-
-func entityIDFromNode(n *etree.Element) string {
-	for el := n; el != nil; el = el.Parent() {
-		tag := el.Tag
-		if tag == "EntityDescriptor" || strings.HasSuffix(tag, ":EntityDescriptor") {
-			return strings.TrimSpace(el.SelectAttrValue("entityID", ""))
-		}
-	}
-	return ""
 }
 
 func evaluateAttributeSelector(sel string, current []string, currentAttrs map[string]EntityAttributes, sourceMap map[string][]string, sourceAttrs map[string]map[string]EntityAttributes) []string {
@@ -910,31 +767,32 @@ func runSort(cfg SortStep, current []string, docs map[string]string) []string {
 }
 
 func xpathValueForEntity(orderBy string, entityID string, xmlBody string) string {
-	if strings.TrimSpace(orderBy) == "" {
+	if strings.TrimSpace(orderBy) == "" || strings.TrimSpace(xmlBody) == "" {
 		return ""
 	}
-	if strings.TrimSpace(xmlBody) == "" {
-		return ""
-	}
-
-	doc := etree.NewDocument()
-	if err := doc.ReadFromString(xmlBody); err != nil || doc.Root() == nil {
-		return ""
-	}
-
 	if strings.TrimSpace(orderBy) == "@entityID" {
 		return entityID
 	}
-
-	nodes, ok := safeFindElements(doc.Root(), orderBy)
-	if !ok || len(nodes) == 0 {
+	expr, err := xpath.CompileWithNS(orderBy, samlNS)
+	if err != nil {
 		return ""
 	}
-	n := nodes[0]
-	if n.Text() != "" {
-		return strings.TrimSpace(n.Text())
+	var wrapped strings.Builder
+	wrapped.WriteString(samlNSOpen)
+	wrapped.WriteString(xmlBody)
+	wrapped.WriteString(samlNSClose)
+	root, err := xmlquery.Parse(strings.NewReader(wrapped.String()))
+	if err != nil {
+		return ""
 	}
-	return strings.TrimSpace(n.SelectAttrValue("entityID", ""))
+	n := xmlquery.QuerySelector(root, expr)
+	if n == nil {
+		return ""
+	}
+	if text := strings.TrimSpace(n.InnerText()); text != "" {
+		return text
+	}
+	return strings.TrimSpace(n.SelectAttr("entityID"))
 }
 
 func intersectIfNeeded(primary []string, secondary []string) []string {
