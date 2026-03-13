@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -124,7 +125,75 @@ func loadSourceData(src Source) (sourceData, error) {
 		attributes[id] = EntityAttributes{Roles: map[string]struct{}{}, Categories: map[string]struct{}{}, TextTokens: map[string]struct{}{}, IPHints: map[string]struct{}{}}
 	}
 
+	// ingestBytes parses SAML metadata bytes and merges entities into the running maps.
+	ingestBytes := func(b []byte) error {
+		parsed, err := parseMetadataFromXML(b)
+		if err != nil {
+			return err
+		}
+		xmlByID, err := parseEntityXMLByID(b)
+		if err != nil {
+			return err
+		}
+		mergeAttributes(attributes, parsed)
+		mergeEntityXML(entityXML, xmlByID)
+		return nil
+	}
+
+	// expandXRDAndLoad fetches each metadata URL extracted from an XRD/XRDS document.
+	expandXRDAndLoad := func(b []byte, origin string) error {
+		urls, err := parseXRDURLs(b)
+		if err != nil {
+			return fmt.Errorf("parse XRD from %q: %w", origin, err)
+		}
+		for _, u := range urls {
+			xrdBytes, fetchErr := fetchURL(src, u)
+			if fetchErr != nil {
+				if src.Cleanup {
+					continue
+				}
+				return fetchErr
+			}
+			if err := ingestBytes(xrdBytes); err != nil {
+				if src.Cleanup {
+					continue
+				}
+				return fmt.Errorf("parse metadata from XRD link %q: %w", u, err)
+			}
+		}
+		return nil
+	}
+
 	for _, path := range src.Files {
+		// Directory: load every *.xml file inside it (GAP-9).
+		fi, statErr := os.Stat(path)
+		if statErr == nil && fi.IsDir() {
+			entries, err := os.ReadDir(path)
+			if err != nil {
+				if src.Cleanup {
+					continue
+				}
+				return sourceData{}, fmt.Errorf("read source directory %q: %w", path, err)
+			}
+			for _, de := range entries {
+				if de.IsDir() || !strings.HasSuffix(de.Name(), ".xml") {
+					continue
+				}
+				xmlPath := filepath.Join(path, de.Name())
+				b, err := os.ReadFile(xmlPath)
+				if err != nil {
+					if src.Cleanup {
+						continue
+					}
+					return sourceData{}, fmt.Errorf("read source file %q: %w", xmlPath, err)
+				}
+				if err := ingestBytes(b); err != nil && !src.Cleanup {
+					return sourceData{}, fmt.Errorf("parse metadata from file %q: %w", xmlPath, err)
+				}
+			}
+			continue
+		}
+
 		b, err := os.ReadFile(path)
 		if err != nil {
 			if src.Cleanup {
@@ -138,22 +207,19 @@ func loadSourceData(src Source) (sourceData, error) {
 			}
 			return sourceData{}, fmt.Errorf("verify source file %q: %w", path, err)
 		}
-		parsed, err := parseMetadataFromXML(b)
-		if err != nil {
+		// XRD/XRDS: treat as a list of metadata URLs (GAP-4).
+		if isXRDContent(b) {
+			if err := expandXRDAndLoad(b, path); err != nil && !src.Cleanup {
+				return sourceData{}, err
+			}
+			continue
+		}
+		if err := ingestBytes(b); err != nil {
 			if src.Cleanup {
 				continue
 			}
 			return sourceData{}, fmt.Errorf("parse metadata from file %q: %w", path, err)
 		}
-		xmlByID, err := parseEntityXMLByID(b)
-		if err != nil {
-			if src.Cleanup {
-				continue
-			}
-			return sourceData{}, fmt.Errorf("parse entity xml from file %q: %w", path, err)
-		}
-		mergeAttributes(attributes, parsed)
-		mergeEntityXML(entityXML, xmlByID)
 	}
 
 	for _, u := range src.URLs {
@@ -170,22 +236,19 @@ func loadSourceData(src Source) (sourceData, error) {
 			}
 			return sourceData{}, fmt.Errorf("verify source url %q: %w", u, err)
 		}
-		parsed, err := parseMetadataFromXML(b)
-		if err != nil {
+		// XRD/XRDS: treat as a list of metadata URLs (GAP-4).
+		if isXRDContent(b) {
+			if err := expandXRDAndLoad(b, u); err != nil && !src.Cleanup {
+				return sourceData{}, err
+			}
+			continue
+		}
+		if err := ingestBytes(b); err != nil {
 			if src.Cleanup {
 				continue
 			}
 			return sourceData{}, fmt.Errorf("parse metadata from url %q: %w", u, err)
 		}
-		xmlByID, err := parseEntityXMLByID(b)
-		if err != nil {
-			if src.Cleanup {
-				continue
-			}
-			return sourceData{}, fmt.Errorf("parse entity xml from url %q: %w", u, err)
-		}
-		mergeAttributes(attributes, parsed)
-		mergeEntityXML(entityXML, xmlByID)
 	}
 
 	ids := make([]string, 0, len(attributes))
@@ -195,6 +258,57 @@ func loadSourceData(src Source) (sourceData, error) {
 	sort.Strings(ids)
 
 	return sourceData{EntityIDs: ids, Attributes: attributes, EntityXML: entityXML}, nil
+}
+
+// isXRDContent returns true if b is an XRD or XRDS XML document
+// (namespace http://docs.oasis-open.org/ns/xri/xrd-1.0).
+func isXRDContent(b []byte) bool {
+	dec := xml.NewDecoder(bytes.NewReader(b))
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		if se, ok := tok.(xml.StartElement); ok {
+			return (se.Name.Local == "XRDS" || se.Name.Local == "XRD") &&
+				se.Name.Space == "http://docs.oasis-open.org/ns/xri/xrd-1.0"
+		}
+	}
+}
+
+// parseXRDURLs extracts metadata URLs from an XRD/XRDS document.
+// It returns the href values of all <Link> elements whose rel attribute is
+// "urn:oasis:names:tc:SAML:2.0:metadata" (the standard SAML metadata relation).
+func parseXRDURLs(b []byte) ([]string, error) {
+	const samlMetadataRel = "urn:oasis:names:tc:SAML:2.0:metadata"
+	dec := xml.NewDecoder(bytes.NewReader(b))
+	var urls []string
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok || se.Name.Local != "Link" {
+			continue
+		}
+		var rel, href string
+		for _, a := range se.Attr {
+			switch a.Name.Local {
+			case "rel":
+				rel = strings.TrimSpace(a.Value)
+			case "href":
+				href = strings.TrimSpace(a.Value)
+			}
+		}
+		if rel == samlMetadataRel && href != "" {
+			urls = append(urls, href)
+		}
+	}
+	return urls, nil
 }
 
 func verifySourceIfConfigured(src Source, xmlBody []byte) error {

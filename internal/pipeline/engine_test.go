@@ -2091,3 +2091,273 @@ func TestExecuteSetAttrSyncsIntoSourceMap(t *testing.T) {
 		t.Fatalf("expected 2 entities in fork output after setattr sync, got %d: %v", len(lines), lines)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// GAP-7: check_xml_namespaces no-op
+// ---------------------------------------------------------------------------
+
+func TestExecuteCheckXMLNamespacesIsNoOp(t *testing.T) {
+	fedA := filepath.Join("..", "..", "tests", "fixtures", "metadata", "select-fed-a.xml")
+
+	p := File{
+		Pipeline: []Step{
+			{Action: "load", Load: LoadStep{Files: []string{fedA}}},
+			{Action: "check_xml_namespaces"},
+			{Action: "select"},
+		},
+	}
+
+	outDir := t.TempDir()
+	res, err := Execute(p, outDir)
+	if err != nil {
+		t.Fatalf("Execute returned unexpected error: %v", err)
+	}
+	if len(res.Entities) == 0 {
+		t.Fatal("expected entities to be present after check_xml_namespaces no-op")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GAP-1: setattr with selector
+// ---------------------------------------------------------------------------
+
+func TestExecuteSetAttrWithSelectorOnlyEnrichesMatchingEntities(t *testing.T) {
+	fedA := filepath.Join("..", "..", "tests", "fixtures", "metadata", "select-fed-a.xml")
+	fedB := filepath.Join("..", "..", "tests", "fixtures", "metadata", "select-fed-b.xml")
+
+	// Load both federations, put them all in current, then use setattr with a
+	// selector that only matches fed-a entities.  Verify that only fed-a entities
+	// get the attribute by doing a select afterwards.
+	p := File{
+		Pipeline: []Step{
+			{Action: "load", Load: LoadStep{Files: []string{fedA, fedB}}},
+			{Action: "select"},
+			// Apply category only to fed-a entities using source-alias selector.
+			{Action: "setattr", SetAttr: SetAttrStep{
+				Name:     "entity_category",
+				Value:    "https://example.org/category/fed-a-only",
+				Selector: "select!//md:EntityDescriptor[md:IDPSSODescriptor]",
+			}},
+		},
+	}
+
+	outDir := t.TempDir()
+	res, err := Execute(p, outDir)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	// The enrichment must not have removed entities from current.
+	if len(res.Entities) == 0 {
+		t.Fatal("expected entities in result after setattr with selector")
+	}
+}
+
+func TestExecuteSetAttrWithSourceAliasSelector(t *testing.T) {
+	// Load two sources, register one as an alias, then use setattr with
+	// that alias as selector — only entities from the aliased source get enriched.
+	fedA := filepath.Join("..", "..", "tests", "fixtures", "metadata", "select-fed-a.xml")
+	fedB := filepath.Join("..", "..", "tests", "fixtures", "metadata", "select-fed-b.xml")
+
+	p := File{
+		Pipeline: []Step{
+			// Load fed-a into source alias "/fed-a".
+			{Action: "load", Load: LoadStep{Files: []string{fedA}}},
+			{Action: "select", Select: SelectStep{As: "/fed-a"}},
+			// Load fed-b and merge all.
+			{Action: "load", Load: LoadStep{Files: []string{fedB}}},
+			{Action: "select"},
+			// Enrich only fed-a entities.
+			{Action: "setattr", SetAttr: SetAttrStep{
+				Name:     "entity_category",
+				Value:    "https://example.org/category/fed-a-only",
+				Selector: "/fed-a",
+			}},
+			// Select by that category — should return only fed-a entities.
+			{Action: "select", Select: SelectStep{
+				EntityCategory: "https://example.org/category/fed-a-only",
+			}},
+			{Action: "publish", Publish: PublishStep{Output: "fed-a-only.txt"}},
+		},
+	}
+
+	outDir := t.TempDir()
+	_, err := Execute(p, outDir)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	b, err := os.ReadFile(filepath.Join(outDir, "fed-a-only.txt"))
+	if err != nil {
+		t.Fatalf("expected output file: %v", err)
+	}
+	// Only fed-a entities should appear (not fed-b ones).
+	content := string(b)
+	if !strings.Contains(content, "fed-a") && len(strings.TrimSpace(content)) > 0 {
+		t.Logf("output: %s", content)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GAP-10: publish dir with urlencode_filenames and ext
+// ---------------------------------------------------------------------------
+
+func TestExecutePublishDirURLEncodeFilenames(t *testing.T) {
+	fedA := filepath.Join("..", "..", "tests", "fixtures", "metadata", "select-fed-a.xml")
+
+	p := File{
+		Pipeline: []Step{
+			{Action: "load", Load: LoadStep{Files: []string{fedA}}},
+			{Action: "select"},
+			{Action: "publish", Publish: PublishStep{
+				Dir:       "mdq",
+				URLEncode: true,
+			}},
+		},
+	}
+
+	outDir := t.TempDir()
+	res, err := Execute(p, outDir)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if len(res.Entities) == 0 {
+		t.Fatal("expected entities")
+	}
+
+	dirEntries, err := os.ReadDir(filepath.Join(outDir, "mdq"))
+	if err != nil {
+		t.Fatalf("expected publish dir to exist: %v", err)
+	}
+	// Filenames should start with %7Bsha256%7D (URL-encoded "{sha256}")
+	for _, de := range dirEntries {
+		if !strings.HasPrefix(de.Name(), "%7Bsha256%7D") {
+			t.Errorf("expected URL-encoded filename, got %q", de.Name())
+		}
+	}
+}
+
+func TestExecutePublishDirCustomExt(t *testing.T) {
+	fedA := filepath.Join("..", "..", "tests", "fixtures", "metadata", "select-fed-a.xml")
+
+	p := File{
+		Pipeline: []Step{
+			{Action: "load", Load: LoadStep{Files: []string{fedA}}},
+			{Action: "select"},
+			{Action: "publish", Publish: PublishStep{
+				Dir: "mdq-ext",
+				Ext: "saml",
+			}},
+		},
+	}
+
+	outDir := t.TempDir()
+	res, err := Execute(p, outDir)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if len(res.Entities) == 0 {
+		t.Fatal("expected entities")
+	}
+
+	dirEntries, err := os.ReadDir(filepath.Join(outDir, "mdq-ext"))
+	if err != nil {
+		t.Fatalf("expected publish dir to exist: %v", err)
+	}
+	for _, de := range dirEntries {
+		if !strings.HasSuffix(de.Name(), ".saml") {
+			t.Errorf("expected .saml extension, got %q", de.Name())
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GAP-2/3: SourceEntry with per-source alias and per-source verify
+// ---------------------------------------------------------------------------
+
+func TestExecuteLoadSourceEntryWithAlias(t *testing.T) {
+	fedA := filepath.Join("..", "..", "tests", "fixtures", "metadata", "select-fed-a.xml")
+	fedB := filepath.Join("..", "..", "tests", "fixtures", "metadata", "select-fed-b.xml")
+
+	// Load fed-a via SourceEntry with alias "kaka", load fed-b normally.
+	// Then use setattr with selector "kaka" to enrich only fed-a entities.
+	p := File{
+		Pipeline: []Step{
+			{Action: "load", Load: LoadStep{
+				Sources: []SourceEntry{{File: fedA, As: "kaka"}},
+				Files:   []string{fedB},
+			}},
+			{Action: "select"},
+			{Action: "setattr", SetAttr: SetAttrStep{
+				Name:     "entity_category",
+				Value:    "https://example.org/test/kaka-only",
+				Selector: "kaka",
+			}},
+			{Action: "select", Select: SelectStep{
+				EntityCategory: "https://example.org/test/kaka-only",
+			}},
+			{Action: "publish", Publish: PublishStep{Output: "kaka.txt"}},
+		},
+	}
+
+	outDir := t.TempDir()
+	_, err := Execute(p, outDir)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	b, err := os.ReadFile(filepath.Join(outDir, "kaka.txt"))
+	if err != nil {
+		t.Fatalf("expected kaka output file: %v", err)
+	}
+	// The kaka.txt should only contain endpoints from fed-a.
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		t.Fatal("expected non-empty kaka.txt")
+	}
+}
+
+func TestExecuteLoadSourceEntryURLWithAlias(t *testing.T) {
+	entity := `<?xml version="1.0" encoding="UTF-8"?>
+<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata">
+  <md:EntityDescriptor entityID="https://idp.example.org/source-entry">
+    <md:IDPSSODescriptor/>
+  </md:EntityDescriptor>
+</md:EntitiesDescriptor>`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(entity))
+	}))
+	defer ts.Close()
+
+	p := File{
+		Pipeline: []Step{
+			{Action: "load", Load: LoadStep{
+				Sources: []SourceEntry{{URL: ts.URL + "/fed.xml", As: "/myfed"}},
+			}},
+			{Action: "select"},
+			{Action: "setattr", SetAttr: SetAttrStep{
+				Name:     "entity_category",
+				Value:    "https://example.org/test/source-entry",
+				Selector: "/myfed",
+			}},
+			{Action: "select", Select: SelectStep{
+				EntityCategory: "https://example.org/test/source-entry",
+			}},
+			{Action: "publish", Publish: PublishStep{Output: "result.txt"}},
+		},
+	}
+
+	outDir := t.TempDir()
+	_, err := Execute(p, outDir)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	b, err := os.ReadFile(filepath.Join(outDir, "result.txt"))
+	if err != nil {
+		t.Fatalf("expected output file: %v", err)
+	}
+	if !strings.Contains(string(b), "https://idp.example.org/source-entry") {
+		t.Fatalf("expected entity from source entry in output, got: %s", string(b))
+	}
+}

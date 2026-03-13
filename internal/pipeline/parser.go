@@ -377,6 +377,7 @@ func validateAction(action string) error {
 		"stats", "info", "dump", "print",
 		"first",
 		"nodecountry", "certreport",
+		"check_xml_namespaces",
 		"discojson", "discojson_sp", "discojson_idp",
 		"xslt",
 		"fork", "pipe", "parsecopy",
@@ -409,14 +410,44 @@ func (l *LoadStep) UnmarshalYAML(node *yaml.Node) error {
 		return nil
 	case yaml.SequenceNode:
 		for _, item := range node.Content {
-			if item.Kind != yaml.ScalarNode {
-				return fmt.Errorf("load sequence items must be scalars")
-			}
-			v := item.Value
-			if strings.HasPrefix(v, "http://") || strings.HasPrefix(v, "https://") {
-				l.URLs = append(l.URLs, v)
-			} else {
-				l.Files = append(l.Files, v)
+			switch item.Kind {
+			case yaml.MappingNode:
+				// Structured source entry: {url: ..., file: ..., as: ..., verify: ...}
+				var entry SourceEntry
+				if err := item.Decode(&entry); err != nil {
+					return fmt.Errorf("load sequence mapping item: %w", err)
+				}
+				l.Sources = append(l.Sources, entry)
+			case yaml.ScalarNode:
+				v := item.Value
+				// Detect "path_or_URL as alias [cleanup]" inline syntax.
+				if idx := strings.Index(v, " as "); idx >= 0 {
+					resource := strings.TrimSpace(v[:idx])
+					rest := strings.TrimSpace(v[idx+4:])
+					alias := rest
+					cleanup := false
+					if i := strings.Index(rest, " "); i >= 0 {
+						alias = strings.TrimSpace(rest[:i])
+						tail := strings.ToLower(strings.TrimSpace(rest[i+1:]))
+						cleanup = strings.Contains(tail, "cleanup")
+					}
+					entry := SourceEntry{As: alias, Cleanup: cleanup}
+					if strings.HasPrefix(resource, "http://") || strings.HasPrefix(resource, "https://") {
+						entry.URL = resource
+					} else {
+						entry.File = resource
+					}
+					l.Sources = append(l.Sources, entry)
+					continue
+				}
+				// Plain URL or file path.
+				if strings.HasPrefix(v, "http://") || strings.HasPrefix(v, "https://") {
+					l.URLs = append(l.URLs, v)
+				} else {
+					l.Files = append(l.Files, v)
+				}
+			default:
+				return fmt.Errorf("load sequence items must be scalars or mappings")
 			}
 		}
 		return nil

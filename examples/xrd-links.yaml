@@ -1,0 +1,37 @@
+# XRD/XRDS link-file pipeline
+#
+# Equivalent to the pyFF examples/big.fd and examples/ndn.fd pipelines.
+# goFF transparently detects XRD/XRDS discovery documents and expands
+# them to their embedded metadata URLs before loading.
+#
+# The XRD file must be in OASIS XRD 1.0 format:
+#   <XRDS xmlns="http://docs.oasis-open.org/ns/xri/xrd-1.0">
+#     <XRD>
+#       <Link rel="urn:oasis:names:tc:SAML:2.0:metadata" href="https://..."/>
+#     </XRD>
+#   </XRDS>
+#
+# References:
+#   pyFF: big.fd, load.fd (uses big.xrd, ndn-links.xrd)
+#   goFF gap: GAP-4 (now closed)
+
+- load:
+  # XRD discovery document — goFF fetches linked metadata URLs automatically.
+  - examples/big.xrd
+
+- select:
+
+- stats:
+
+- finalize:
+    Name: https://metadata.example.org/aggregate
+    cacheDuration: PT1H
+    validUntil: P7D
+
+- sign:
+    key: sign.key
+    cert: sign.crt
+
+- publish:
+    output: big-aggregate.xml
+    hash_link: true

@@ -609,3 +609,113 @@ func TestParseFileSortMappingScalarValue(t *testing.T) {
 		t.Fatalf("expected Sort.OrderBy to be @entityID, got %q", p.Pipeline[1].Sort.OrderBy)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// GAP-7: check_xml_namespaces accepted by parser
+// ---------------------------------------------------------------------------
+
+func TestParseCheckXMLNamespacesActionIsAccepted(t *testing.T) {
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "pipeline.yaml")
+	content := "- load\n- check_xml_namespaces\n"
+	if err := os.WriteFile(fixture, []byte(content), 0o600); err != nil {
+		t.Fatalf("failed writing fixture: %v", err)
+	}
+
+	p, err := ParseFile(fixture)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	if len(p.Pipeline) != 2 {
+		t.Fatalf("expected 2 steps, got %d", len(p.Pipeline))
+	}
+	if p.Pipeline[1].Action != "check_xml_namespaces" {
+		t.Fatalf("expected check_xml_namespaces action, got %q", p.Pipeline[1].Action)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GAP-3: inline "url as alias" syntax in load sequence
+// ---------------------------------------------------------------------------
+
+func TestParseLoadInlineAsSyntaxURL(t *testing.T) {
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "pipeline.yaml")
+	content := "- load:\n  - https://example.org/fed.xml as /myfed\n"
+	if err := os.WriteFile(fixture, []byte(content), 0o600); err != nil {
+		t.Fatalf("failed writing fixture: %v", err)
+	}
+
+	p, err := ParseFile(fixture)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	if len(p.Pipeline) != 1 || p.Pipeline[0].Action != "load" {
+		t.Fatalf("expected 1 load step, got %d", len(p.Pipeline))
+	}
+	load := p.Pipeline[0].Load
+	if len(load.Sources) != 1 {
+		t.Fatalf("expected 1 source entry, got %d", len(load.Sources))
+	}
+	if load.Sources[0].URL != "https://example.org/fed.xml" {
+		t.Errorf("expected URL fed.xml, got %q", load.Sources[0].URL)
+	}
+	if load.Sources[0].As != "/myfed" {
+		t.Errorf("expected alias /myfed, got %q", load.Sources[0].As)
+	}
+}
+
+func TestParseLoadInlineAsSyntaxFile(t *testing.T) {
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "pipeline.yaml")
+	content := "- load:\n  - /path/to/swamid.xml as kaka cleanup\n"
+	if err := os.WriteFile(fixture, []byte(content), 0o600); err != nil {
+		t.Fatalf("failed writing fixture: %v", err)
+	}
+
+	p, err := ParseFile(fixture)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	load := p.Pipeline[0].Load
+	if len(load.Sources) != 1 {
+		t.Fatalf("expected 1 source entry, got %d", len(load.Sources))
+	}
+	if load.Sources[0].File != "/path/to/swamid.xml" {
+		t.Errorf("expected file /path/to/swamid.xml, got %q", load.Sources[0].File)
+	}
+	if load.Sources[0].As != "kaka" {
+		t.Errorf("expected alias kaka, got %q", load.Sources[0].As)
+	}
+	if !load.Sources[0].Cleanup {
+		t.Error("expected cleanup to be true")
+	}
+}
+
+func TestParseLoadMappingSequenceItem(t *testing.T) {
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "pipeline.yaml")
+	content := "- load:\n  - url: https://example.org/fed.xml\n    as: /myfed\n    verify: cert.pem\n"
+	if err := os.WriteFile(fixture, []byte(content), 0o600); err != nil {
+		t.Fatalf("failed writing fixture: %v", err)
+	}
+
+	p, err := ParseFile(fixture)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	load := p.Pipeline[0].Load
+	if len(load.Sources) != 1 {
+		t.Fatalf("expected 1 source entry, got %d", len(load.Sources))
+	}
+	e := load.Sources[0]
+	if e.URL != "https://example.org/fed.xml" {
+		t.Errorf("expected URL, got %q", e.URL)
+	}
+	if e.As != "/myfed" {
+		t.Errorf("expected alias /myfed, got %q", e.As)
+	}
+	if e.Verify != "cert.pem" {
+		t.Errorf("expected verify cert.pem, got %q", e.Verify)
+	}
+}

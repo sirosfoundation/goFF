@@ -191,3 +191,122 @@ func TestLoadSourceDataCleanupSkipsBrokenFile(t *testing.T) {
 		t.Fatalf("unexpected loaded entities: %#v", data.EntityIDs)
 	}
 }
+
+func TestIsXRDContent(t *testing.T) {
+	xrds := `<?xml version="1.0"?>
+<XRDS xmlns="http://docs.oasis-open.org/ns/xri/xrd-1.0">
+  <XRD>
+    <Link rel="urn:oasis:names:tc:SAML:2.0:metadata" href="https://example.org/fed.xml"/>
+  </XRD>
+</XRDS>`
+	xrd := `<?xml version="1.0"?>
+<XRD xmlns="http://docs.oasis-open.org/ns/xri/xrd-1.0">
+  <Link rel="urn:oasis:names:tc:SAML:2.0:metadata" href="https://example.org/fed.xml"/>
+</XRD>`
+	saml := `<?xml version="1.0"?>
+<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata">
+</md:EntitiesDescriptor>`
+
+	if !isXRDContent([]byte(xrds)) {
+		t.Error("expected XRDS document to be detected as XRD content")
+	}
+	if !isXRDContent([]byte(xrd)) {
+		t.Error("expected XRD document to be detected as XRD content")
+	}
+	if isXRDContent([]byte(saml)) {
+		t.Error("expected SAML document to NOT be detected as XRD content")
+	}
+}
+
+func TestParseXRDURLs(t *testing.T) {
+	xrds := `<?xml version="1.0"?>
+<XRDS xmlns="http://docs.oasis-open.org/ns/xri/xrd-1.0">
+  <XRD>
+    <Link rel="urn:oasis:names:tc:SAML:2.0:metadata" href="https://example.org/fed-a.xml"/>
+  </XRD>
+  <XRD>
+    <Link rel="http://other.example/other-rel" href="https://example.org/ignored.xml"/>
+  </XRD>
+  <XRD>
+    <Link rel="urn:oasis:names:tc:SAML:2.0:metadata" href="https://example.org/fed-b.xml"/>
+  </XRD>
+</XRDS>`
+
+	urls, err := parseXRDURLs([]byte(xrds))
+	if err != nil {
+		t.Fatalf("parseXRDURLs returned error: %v", err)
+	}
+	if len(urls) != 2 {
+		t.Fatalf("expected 2 URLs, got %d: %#v", len(urls), urls)
+	}
+	if urls[0] != "https://example.org/fed-a.xml" {
+		t.Errorf("expected first URL to be fed-a.xml, got %q", urls[0])
+	}
+	if urls[1] != "https://example.org/fed-b.xml" {
+		t.Errorf("expected second URL to be fed-b.xml, got %q", urls[1])
+	}
+}
+
+func TestLoadSourceDataFromDirectory(t *testing.T) {
+	dir := t.TempDir()
+
+	for _, entity := range []struct{ id, file string }{
+		{"https://idp.example.org/dir-a", "a.xml"},
+		{"https://idp.example.org/dir-b", "b.xml"},
+	} {
+		body := `<?xml version="1.0" encoding="UTF-8"?>
+<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata">
+  <md:EntityDescriptor entityID="` + entity.id + `">
+    <md:IDPSSODescriptor/>
+  </md:EntityDescriptor>
+</md:EntitiesDescriptor>`
+		if err := os.WriteFile(filepath.Join(dir, entity.file), []byte(body), 0o600); err != nil {
+			t.Fatalf("failed writing fixture: %v", err)
+		}
+	}
+	// Also write a non-xml file that should be skipped.
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("ignore me"), 0o600); err != nil {
+		t.Fatalf("failed writing non-xml fixture: %v", err)
+	}
+
+	data, err := loadSourceData(Source{ID: "dir-source", Files: []string{dir}})
+	if err != nil {
+		t.Fatalf("loadSourceData returned error: %v", err)
+	}
+	if len(data.EntityIDs) != 2 {
+		t.Fatalf("expected 2 entities from directory, got %d: %#v", len(data.EntityIDs), data.EntityIDs)
+	}
+}
+
+func TestLoadSourceDataXRDFileExpands(t *testing.T) {
+	entity := `<?xml version="1.0" encoding="UTF-8"?>
+<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata">
+  <md:EntityDescriptor entityID="https://idp.example.org/xrd-expanded">
+    <md:IDPSSODescriptor/>
+  </md:EntityDescriptor>
+</md:EntitiesDescriptor>`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(entity))
+	}))
+	defer ts.Close()
+
+	xrdsBody := `<?xml version="1.0"?>
+<XRDS xmlns="http://docs.oasis-open.org/ns/xri/xrd-1.0">
+  <XRD>
+    <Link rel="urn:oasis:names:tc:SAML:2.0:metadata" href="` + ts.URL + `/fed.xml"/>
+  </XRD>
+</XRDS>`
+	xrdFile := filepath.Join(t.TempDir(), "links.xrd")
+	if err := os.WriteFile(xrdFile, []byte(xrdsBody), 0o600); err != nil {
+		t.Fatalf("failed writing XRD fixture: %v", err)
+	}
+
+	data, err := loadSourceData(Source{ID: "xrd-source", Files: []string{xrdFile}})
+	if err != nil {
+		t.Fatalf("loadSourceData returned error: %v", err)
+	}
+	if len(data.EntityIDs) != 1 || data.EntityIDs[0] != "https://idp.example.org/xrd-expanded" {
+		t.Fatalf("unexpected loaded entities: %#v", data.EntityIDs)
+	}
+}

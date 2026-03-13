@@ -47,18 +47,30 @@ type Step struct {
 	Fork        ForkStep
 }
 
+// SourceEntry is a single source item within a LoadStep, supporting per-source
+// aliases (as), cert verification (verify), and cleanup flags.
+type SourceEntry struct {
+	URL     string `yaml:"url"`
+	File    string `yaml:"file"`
+	As      string `yaml:"as"`
+	Verify  string `yaml:"verify"`
+	Cleanup bool   `yaml:"cleanup"`
+}
+
 // LoadStep loads metadata into the pipeline.
 // Resources are given directly as files, URLs, or inline entity IDs.
 // In-pipeline aliases produced by "select as /name" can be referenced in Files.
+// Source entries in Sources support per-source aliases and cert verification.
 type LoadStep struct {
-	Files    []string `yaml:"files"`
-	URLs     []string `yaml:"urls"`
-	Verify   string   `yaml:"verify"`
-	Timeout  string   `yaml:"timeout"`
-	Retries  int      `yaml:"retries"`
-	Cleanup  bool     `yaml:"cleanup"`
-	Entities []string `yaml:"entities"`
-	Via      []string `yaml:"via"`
+	Files    []string      `yaml:"files"`
+	URLs     []string      `yaml:"urls"`
+	Sources  []SourceEntry `yaml:"sources"`
+	Verify   string        `yaml:"verify"`
+	Timeout  string        `yaml:"timeout"`
+	Retries  int           `yaml:"retries"`
+	Cleanup  bool          `yaml:"cleanup"`
+	Entities []string      `yaml:"entities"`
+	Via      []string      `yaml:"via"`
 }
 
 // SelectStep filters current entities to the provided set.
@@ -77,18 +89,22 @@ type SelectStep struct {
 }
 
 // SetAttrStep applies metadata-like attribute enrichments to current entities.
+// If Selector is set, enrichment is applied only to entities matching the selector.
 type SetAttrStep struct {
-	Name   string   `yaml:"name"`
-	Value  string   `yaml:"value"`
-	Values []string `yaml:"values"`
+	Name     string   `yaml:"name"`
+	Value    string   `yaml:"value"`
+	Values   []string `yaml:"values"`
+	Selector string   `yaml:"selector"`
 }
 
 // RegInfoStep applies registration authority metadata to current entities.
+// If Selector is set, enrichment is applied only to entities matching the selector.
 type RegInfoStep struct {
 	Authority             string   `yaml:"authority"`
 	RegistrationAuthority string   `yaml:"registration_authority"`
 	Policy                string   `yaml:"policy"`
 	Policies              []string `yaml:"policies"`
+	Selector              string   `yaml:"selector"`
 }
 
 // PubInfoStep applies publication-related text metadata to current entities.
@@ -102,6 +118,10 @@ type PubInfoStep struct {
 }
 
 // PublishStep writes current entities to an output file.
+// URLEncode, Ext, and Raw are supported for directory publishing:
+//   - URLEncode: write MDQ-compatible URL-encoded {sha256}HEX filenames
+//   - Ext: file extension for directory items (default ".xml")
+//   - Raw: accepted for pyFF compatibility; dir publish is always raw
 type PublishStep struct {
 	Output      string `yaml:"output"`
 	As          string `yaml:"as"`
@@ -110,6 +130,9 @@ type PublishStep struct {
 	HashLink    bool   `yaml:"hash_link"`
 	UpdateStore bool   `yaml:"update_store"`
 	StoreDir    string `yaml:"store_dir"`
+	URLEncode   bool   `yaml:"urlencode_filenames"`
+	Ext         string `yaml:"ext"`
+	Raw         bool   `yaml:"raw"`
 }
 
 // UnmarshalYAML supports:

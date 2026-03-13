@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -99,11 +100,23 @@ func executeSteps(
 			current, currentAttrs, currentXML = runSelect(step.Pick, current, currentAttrs, currentXML, sourceMap, sourceAttrs, sourceXML)
 			publishFirst = false
 		case "setattr":
-			currentAttrs = runSetAttr(step.SetAttr, current, currentAttrs)
+			applyTo := current
+			if step.SetAttr.Selector != "" {
+				applyTo, _ = collectSelectorEntityIDs(current, currentAttrs, currentXML,
+					SelectStep{Selector: step.SetAttr.Selector},
+					sourceMap, sourceAttrs, sourceXML)
+			}
+			currentAttrs = runSetAttr(step.SetAttr, applyTo, currentAttrs)
 			syncCurrentAttrsToSources(current, currentAttrs, sourceAttrs)
 			publishFirst = false
 		case "reginfo":
-			currentAttrs = runRegInfo(step.RegInfo, current, currentAttrs)
+			applyTo := current
+			if step.RegInfo.Selector != "" {
+				applyTo, _ = collectSelectorEntityIDs(current, currentAttrs, currentXML,
+					SelectStep{Selector: step.RegInfo.Selector},
+					sourceMap, sourceAttrs, sourceXML)
+			}
+			currentAttrs = runRegInfo(step.RegInfo, applyTo, currentAttrs)
 			syncCurrentAttrsToSources(current, currentAttrs, sourceAttrs)
 			publishFirst = false
 		case "pubinfo":
@@ -129,6 +142,8 @@ func executeSteps(
 			runStats(current)
 		case "info":
 			runInfo(current)
+		case "check_xml_namespaces":
+			// Namespace validation is implicit during XML parsing; accepted as a no-op.
 		case "dump", "print":
 			runDump(current)
 		case "nodecountry":
@@ -245,8 +260,8 @@ func runLoad(cfg LoadStep, baseDir string, sourceMap map[string][]string, source
 		return applyVia(append([]string(nil), cfg.Entities...), attrs, map[string]string{})
 	}
 
-	// Files/URLs: separate real file paths from in-pipeline alias references.
-	if len(cfg.Files) > 0 || len(cfg.URLs) > 0 {
+	// Files/URLs/Sources: separate real file paths from in-pipeline alias references.
+	if len(cfg.Files) > 0 || len(cfg.URLs) > 0 || len(cfg.Sources) > 0 {
 		allIDs := make([]string, 0)
 		allAttrs := make(map[string]EntityAttributes)
 		allDocs := make(map[string]string)
@@ -297,10 +312,46 @@ func runLoad(cfg LoadStep, baseDir string, sourceMap map[string][]string, source
 			merge(data)
 		}
 
+		// Process SourceEntry items (per-source aliases, per-source verify) (GAP-2, GAP-3).
+		for _, entry := range cfg.Sources {
+			var entryFiles, entryURLs []string
+			if entry.URL != "" {
+				entryURLs = []string{entry.URL}
+			} else if entry.File != "" {
+				entryFiles = []string{entry.File}
+			} else {
+				continue
+			}
+			verify := entry.Verify
+			if verify == "" {
+				verify = cfg.Verify
+			}
+			cleanup := entry.Cleanup || cfg.Cleanup
+			entrySrc := resolveSourcePaths(Source{
+				ID:      "_load_entry",
+				Files:   entryFiles,
+				URLs:    entryURLs,
+				Verify:  verify,
+				Timeout: cfg.Timeout,
+				Retries: cfg.Retries,
+				Cleanup: cleanup,
+			}, baseDir)
+			entryData, err := loadSourceData(entrySrc)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("load source entry: %w", err)
+			}
+			merge(entryData)
+			if entry.As != "" {
+				sourceMap[entry.As] = append([]string(nil), entryData.EntityIDs...)
+				sourceAttrs[entry.As] = cloneAttrs(entryData.Attributes)
+				sourceXML[entry.As] = cloneEntityXML(entryData.EntityXML)
+			}
+		}
+
 		return applyVia(allIDs, allAttrs, allDocs)
 	}
 
-	return nil, nil, nil, fmt.Errorf("load: specify files, urls, or entities")
+	return nil, nil, nil, fmt.Errorf("load: specify files, urls, sources, or entities")
 }
 
 func runSelect(cfg SelectStep, current []string, currentAttrs map[string]EntityAttributes, currentXML map[string]string, sourceMap map[string][]string, sourceAttrs map[string]map[string]EntityAttributes, sourceXML map[string]map[string]string) ([]string, map[string]EntityAttributes, map[string]string) {
@@ -1263,6 +1314,8 @@ func resolvePublishOutput(cfg PublishStep) string {
 // runPublishDir writes one XML file per entity into a directory.
 // Each file is named by the sha256 hex of the entity ID with a .xml extension,
 // matching pyFF directory-publish topology for MDQ static file serving.
+// When cfg.URLEncode is true, filenames use the MDQ URL-encoded {sha256}HEX convention.
+// cfg.Ext overrides the default ".xml" extension.
 // Raw XML from currentXML is used when available; otherwise a stub EntityDescriptor is generated.
 func runPublishDir(cfg PublishStep, outputDir string, current []string, currentXML map[string]string) error {
 	dir := filepath.Join(outputDir, cfg.Dir)
@@ -1270,9 +1323,24 @@ func runPublishDir(cfg PublishStep, outputDir string, current []string, currentX
 		return fmt.Errorf("create publish dir: %w", err)
 	}
 
+	ext := ".xml"
+	if strings.TrimSpace(cfg.Ext) != "" {
+		ext = cfg.Ext
+		if !strings.HasPrefix(ext, ".") {
+			ext = "." + ext
+		}
+	}
+
 	for _, entityID := range current {
 		h := sha256.Sum256([]byte(entityID))
-		filename := fmt.Sprintf("%x.xml", h[:])
+		hexHash := fmt.Sprintf("%x", h[:])
+
+		var filename string
+		if cfg.URLEncode {
+			filename = url.PathEscape("{sha256}"+hexHash) + ext
+		} else {
+			filename = hexHash + ext
+		}
 		path := filepath.Join(dir, filename)
 
 		var body []byte
