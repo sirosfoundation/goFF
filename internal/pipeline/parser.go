@@ -31,6 +31,11 @@ func ParseFile(path string) (File, error) {
 		return File{}, fmt.Errorf("pipeline file must be a YAML sequence of steps")
 	}
 
+	// Pre-pass: extract named preprocessing branches from `when <name>:` nodes
+	// that are not update/always/true/x or request-side branches.
+	// These can be invoked via SourceEntry.Via during load.
+	branches := extractNamedBranches(body)
+
 	steps, err := parsePipelineSequence(body)
 	if err != nil {
 		return File{}, fmt.Errorf("parse pipeline step list: %w", err)
@@ -40,7 +45,36 @@ func ParseFile(path string) (File, error) {
 		return File{}, fmt.Errorf("pipeline must contain at least one step")
 	}
 
-	return File{Pipeline: steps, BaseDir: filepath.Dir(path)}, nil
+	return File{Pipeline: steps, Branches: branches, BaseDir: filepath.Dir(path)}, nil
+}
+
+// extractNamedBranches scans a top-level pipeline sequence and returns a map of
+// name → steps for every `when <name>:` node that is not an update/always/true/x
+// branch and not a request-side branch (request, accept, path).
+func extractNamedBranches(seq *yaml.Node) map[string][]Step {
+	branches := make(map[string][]Step)
+	for _, n := range seq.Content {
+		if !isWhenNode(n) {
+			continue
+		}
+		cond, branchBody := whenNodeParts(n)
+		c := strings.ToLower(strings.TrimSpace(cond))
+		if shouldIncludeWhen(c) {
+			continue // update/always/true/x — goes into main pipeline
+		}
+		if c == "request" || strings.HasPrefix(c, "accept ") || strings.HasPrefix(c, "path ") {
+			continue // request-side branches are not preprocessing branches
+		}
+		if branchBody.Kind != yaml.SequenceNode {
+			continue // skip malformed nodes silently
+		}
+		branchSteps, err := parsePipelineSequence(branchBody)
+		if err != nil {
+			continue // skip branches that can't parse (may contain unsupported actions)
+		}
+		branches[c] = branchSteps
+	}
+	return branches
 }
 
 func parsePipelineSequence(seq *yaml.Node) ([]Step, error) {
@@ -412,39 +446,22 @@ func (l *LoadStep) UnmarshalYAML(node *yaml.Node) error {
 		for _, item := range node.Content {
 			switch item.Kind {
 			case yaml.MappingNode:
-				// Structured source entry: {url: ..., file: ..., as: ..., verify: ...}
+				// Structured source entry: {url: ..., file: ..., as: ..., via: ..., verify: ...}
 				var entry SourceEntry
 				if err := item.Decode(&entry); err != nil {
 					return fmt.Errorf("load sequence mapping item: %w", err)
 				}
 				l.Sources = append(l.Sources, entry)
 			case yaml.ScalarNode:
-				v := item.Value
-				// Detect "path_or_URL as alias [cleanup]" inline syntax.
-				if idx := strings.Index(v, " as "); idx >= 0 {
-					resource := strings.TrimSpace(v[:idx])
-					rest := strings.TrimSpace(v[idx+4:])
-					alias := rest
-					cleanup := false
-					if i := strings.Index(rest, " "); i >= 0 {
-						alias = strings.TrimSpace(rest[:i])
-						tail := strings.ToLower(strings.TrimSpace(rest[i+1:]))
-						cleanup = strings.Contains(tail, "cleanup")
-					}
-					entry := SourceEntry{As: alias, Cleanup: cleanup}
-					if strings.HasPrefix(resource, "http://") || strings.HasPrefix(resource, "https://") {
-						entry.URL = resource
+				entry := parseInlineSourceToken(item.Value)
+				if entry.URL != "" || entry.File != "" {
+					if entry.As != "" || entry.Via != "" || entry.Cleanup {
+						l.Sources = append(l.Sources, entry)
+					} else if entry.URL != "" {
+						l.URLs = append(l.URLs, entry.URL)
 					} else {
-						entry.File = resource
+						l.Files = append(l.Files, entry.File)
 					}
-					l.Sources = append(l.Sources, entry)
-					continue
-				}
-				// Plain URL or file path.
-				if strings.HasPrefix(v, "http://") || strings.HasPrefix(v, "https://") {
-					l.URLs = append(l.URLs, v)
-				} else {
-					l.Files = append(l.Files, v)
 				}
 			default:
 				return fmt.Errorf("load sequence items must be scalars or mappings")
@@ -462,6 +479,52 @@ func (l *LoadStep) UnmarshalYAML(node *yaml.Node) error {
 	default:
 		return fmt.Errorf("invalid load argument kind: %d", node.Kind)
 	}
+}
+
+// parseInlineSourceToken parses a space-separated source token string of the form:
+//
+//	url_or_path [as alias] [via branch] [cleanup]
+//
+// Keywords "as", "via", "cleanup", "clean" are case-insensitive.  Unrecognised
+// tokens are silently ignored (pyFF has extra flags like "validate True" that
+// goFF does not use).
+func parseInlineSourceToken(v string) SourceEntry {
+	parts := strings.Fields(v)
+	if len(parts) == 0 {
+		return SourceEntry{}
+	}
+	entry := SourceEntry{}
+	resource := parts[0]
+	if strings.HasPrefix(resource, "http://") || strings.HasPrefix(resource, "https://") {
+		entry.URL = resource
+	} else {
+		entry.File = resource
+	}
+	i := 1
+	for i < len(parts) {
+		switch strings.ToLower(parts[i]) {
+		case "as":
+			if i+1 < len(parts) {
+				entry.As = parts[i+1]
+				i += 2
+			} else {
+				i++
+			}
+		case "via":
+			if i+1 < len(parts) {
+				entry.Via = strings.ToLower(parts[i+1])
+				i += 2
+			} else {
+				i++
+			}
+		case "cleanup", "clean":
+			entry.Cleanup = true
+			i++
+		default:
+			i++ // unknown token (eg. "validate True") — skip
+		}
+	}
+	return entry
 }
 
 // UnmarshalYAML supports:

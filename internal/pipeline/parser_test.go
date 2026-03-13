@@ -47,6 +47,66 @@ func TestParseFileSkipsNonUpdateWhenBranches(t *testing.T) {
 	}
 }
 
+func TestParseFileExtractsNamedBranches(t *testing.T) {
+	fixture := filepath.Join("..", "..", "tests", "fixtures", "pipelines", "pyff-when-named-branch.yaml")
+	p, err := ParseFile(fixture)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	// Only the "update" branch expands into the pipeline; named branches must be in Branches.
+	if len(p.Pipeline) != 2 { // load + break
+		t.Fatalf("expected 2 update steps, got %d: %v", len(p.Pipeline), p.Pipeline)
+	}
+	if p.Branches == nil {
+		t.Fatal("expected Branches to be populated")
+	}
+	if _, ok := p.Branches["normalize"]; !ok {
+		t.Error("expected branch 'normalize' in Branches")
+	}
+	if _, ok := p.Branches["edugain"]; !ok {
+		t.Error("expected branch 'edugain' in Branches")
+	}
+	if len(p.Branches["normalize"]) != 1 || p.Branches["normalize"][0].Action != "setattr" {
+		t.Errorf("unexpected normalize branch steps: %v", p.Branches["normalize"])
+	}
+}
+
+func TestParseInlineSourceTokenVia(t *testing.T) {
+	e := parseInlineSourceToken("https://example.org/fed.xml as /myfed via normalize")
+	if e.URL != "https://example.org/fed.xml" {
+		t.Errorf("unexpected URL: %q", e.URL)
+	}
+	if e.As != "/myfed" {
+		t.Errorf("unexpected As: %q", e.As)
+	}
+	if e.Via != "normalize" {
+		t.Errorf("unexpected Via: %q", e.Via)
+	}
+}
+
+func TestParseInlineSourceTokenFile(t *testing.T) {
+	e := parseInlineSourceToken("examples/links.xrd as links via normalize")
+	if e.File != "examples/links.xrd" {
+		t.Errorf("unexpected File: %q", e.File)
+	}
+	if e.As != "links" {
+		t.Errorf("unexpected As: %q", e.As)
+	}
+	if e.Via != "normalize" {
+		t.Errorf("unexpected Via: %q", e.Via)
+	}
+}
+
+func TestParseInlineSourceTokenCleanup(t *testing.T) {
+	e := parseInlineSourceToken("https://example.org/md.xml cleanup")
+	if e.URL != "https://example.org/md.xml" {
+		t.Errorf("unexpected URL: %q", e.URL)
+	}
+	if !e.Cleanup {
+		t.Error("expected Cleanup=true")
+	}
+}
+
 func TestParseFileSignStep(t *testing.T) {
 	fixture := filepath.Join("..", "..", "tests", "fixtures", "pipelines", "sign-parse.yaml")
 	p, err := ParseFile(fixture)

@@ -26,7 +26,7 @@ implementing commit reference.
 | `edugain-mdq.fd`, `batch-mdq-loop.fd` | `mdq-server-pipeline.yaml` | ⚠️ partial — `map:`, `log_entity:` omitted; `urlencode_filenames`/`ext` now supported |
 | `big.fd` | `xrd-links.yaml` | ✅ full (XRD input now supported) |
 | `mdx.fd` | — | ⚠️ partial — `fork and merge` replaced by `setattr: selector:`; XRD/alias now supported |
-| `eidas.fd` | — | ⚠️ partial — inline source aliases now work; custom when-branches still by design |
+| `eidas.fd` | — | ✅ full — inline source aliases and custom when-branches now fully supported |
 | `edugain-fork-and-filter.fd` | — | ✅ full (`check_xml_namespaces` and inline source aliases now supported) |
 | `ndn.fd` | — | ✅ full (XRD input now supported) |
 | `out-edugain.fd` | — | ✅ full (directory loading from prior publish:dir output now supported) |
@@ -228,23 +228,22 @@ Example (MDQ-compatible per-entity files):
 
 ### GAP-11 · `when <custom-name>:` pre-processing branches
 
-**Status:** By design — not implemented
+**Status:** ✅ Closed
 
-goFF evaluates only `when update`, `when x`, `when true`, `when always` branches.
-All other branch names are skipped.  This is intentional — goFF does not implement
-pyFF's multi-target invocation model.
+Named branches (`when normalize:`, `when edugain:`, etc.) are now extracted by
+`ParseFile` into `File.Branches` during a pre-pass over the YAML.  They can then
+be referenced by `via branchname` on individual load sources (see GAP-12).
 
 ---
 
-### GAP-12 · `load: via:` only supports in-pipeline aliases, not branch names
+### GAP-12 · `load: via:` branch invocation
 
-**Status:** By design — not implemented
+**Status:** ✅ Closed
 
-pyFF's `via` notation — `url via branchname` — means "fetch this source and run
-it through the `when branchname:` processing branch before ingesting".  In goFF,
-`via` is implemented as an **intersection** filter: only entities whose IDs also
-appear in the referenced alias are admitted.  The branch-invocation semantics are
-not supported.
+Inline source tokens of the form `url via branchname` (or mapping field
+`via: branchname`) now trigger per-source branch execution: after the source is
+fetched, the named preprocessing branch is run on its entities before they are
+merged into the pipeline.  An unknown branch name is a hard error.
 
 ---
 
@@ -290,7 +289,7 @@ inform the goFF roadmap.
 | `edugain-mdq.fd`, `batch-mdq-loop.fd` | `mdq-server-pipeline.yaml` | ⚠️ partial — `map:`, `log_entity:`, per-entity publish options omitted |
 | `big.fd` | — | ❌ XRD input format not supported |
 | `mdx.fd` | — | ❌ `fork and merge`, collection attributes, XRD via |
-| `eidas.fd` | — | ❌ per-source inline options, custom when-branches |
+| `eidas.fd` | — | ✅ full — per-source inline options and custom when-branches now fully supported |
 | `edugain-fork-and-filter.fd` | — | ❌ per-source inline options, `check_xml_namespaces` |
 | `ndn.fd` | — | ❌ when update portion coverable; XRD input |
 | `out-edugain.fd` | — | ❌ loading from a pyFF on-disk store (not an alias) |
@@ -512,31 +511,26 @@ alongside XML files.  goFF's `PublishStep` struct has no equivalent fields.
 ### GAP-11 · `when <custom-name>:` pre-processing branches
 
 **Affects:** `edugain-copy.fd`, `eidas.fd`, `test.fd`, `mdx.fd`
+**Status:** ✅ Closed
 
-pyFF uses named when-branches as named entry points for multi-mode pipelines:
-`when normalize:`, `when edugain:`, `when eidas:`, `when swamid:`, `when sign:`.
-A separate pyFF invocation is run with `--target=branchname` to trigger the
-appropriate branch.
-
-goFF evaluates only `when update`, `when x`, `when true`, `when always` branches.
-All other branch names are skipped.  This is intentional — goFF does not implement
-pyFF's multi-target invocation model.
-
-**Impact:** Any pre-processing logic (XSLT cleanup, XML normalisation) embedded in
-those branches is silently skipped.  Users must inline the XSLT/cleanup steps
-directly in the `when update:` section.
+Named branches (`when normalize:`, `when edugain:`, `when eidas:`, `when swamid:`,
+`when sign:`) are now extracted by `ParseFile` into `File.Branches` during a
+pre-pass over the YAML.  The main `when update:` (or unconditional) pipeline is
+built as before; named branches are stored separately and invoked via the `via`
+notation (see GAP-12).
 
 ---
 
-### GAP-12 · `load: via:` only supports in-pipeline aliases, not branch names
+### GAP-12 · `load: via:` branch invocation
 
 **Affects:** `mdx.fd`, `edugain-copy.fd`
+**Status:** ✅ Closed
 
-pyFF's `via` notation — `url via branchname` — means "fetch this source and run it
-through the `when branchname:` processing branch before ingesting".  In goFF, `via`
-is implemented as an **intersection** filter: only entities whose IDs also appear in
-the referenced alias are admitted.  The branch-invocation semantics are not
-supported.
+pyFF's `via` notation — `url via branchname` — is now fully supported.  After a
+source entry is fetched, the named preprocessing branch is run on its entity set
+before the result is merged into the pipeline.  The inline token form
+(`url via branchname`) and the mapping form (`via: branchname`) are both parsed.
+An unknown branch name is a hard error.
 
 ---
 

@@ -7,9 +7,13 @@ import (
 )
 
 // File represents a pipeline YAML file.
+// Branches holds named preprocessing branches extracted from `when <name>:` nodes
+// that are not update/always/true/x branches.  They can be invoked per-source via
+// the SourceEntry.Via field.
 type File struct {
-	Pipeline []Step `yaml:"pipeline"`
-	BaseDir  string `yaml:"-"`
+	Pipeline []Step            `yaml:"pipeline"`
+	Branches map[string][]Step `yaml:"-"`
+	BaseDir  string            `yaml:"-"`
 }
 
 // Source is a named metadata source used by load steps.
@@ -48,11 +52,13 @@ type Step struct {
 }
 
 // SourceEntry is a single source item within a LoadStep, supporting per-source
-// aliases (as), cert verification (verify), and cleanup flags.
+// aliases (as), preprocessing branches (via), cert verification (verify), and
+// cleanup flags.
 type SourceEntry struct {
 	URL     string `yaml:"url"`
 	File    string `yaml:"file"`
 	As      string `yaml:"as"`
+	Via     string `yaml:"via"`
 	Verify  string `yaml:"verify"`
 	Cleanup bool   `yaml:"cleanup"`
 }

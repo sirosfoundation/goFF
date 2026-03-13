@@ -1,0 +1,11 @@
+- when normalize:
+    - setattr:
+        country: SE
+- when edugain:
+    - setattr:
+        country: EU
+- when update:
+    - load:
+        entities:
+          - https://idp.example.org/idp
+    - break

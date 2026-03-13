@@ -20,6 +20,7 @@ import (
 type Result struct {
 	Entities  []string
 	EntityXML map[string]string
+	Attrs     map[string]EntityAttributes
 	Finalize  FinalizeStep
 	Sign      SignStep
 	Verify    VerifyStep
@@ -38,6 +39,10 @@ func Execute(p File, outputDir string, opts ...ExecuteOptions) (Result, error) {
 	if len(opts) > 0 {
 		o = opts[0]
 	}
+	branches := p.Branches
+	if branches == nil {
+		branches = make(map[string][]Step)
+	}
 	return executeSteps(
 		p.Pipeline, outputDir, p.BaseDir,
 		make(map[string][]string),
@@ -47,6 +52,7 @@ func Execute(p File, outputDir string, opts ...ExecuteOptions) (Result, error) {
 		make(map[string]EntityAttributes),
 		make(map[string]string),
 		FinalizeStep{}, SignStep{}, VerifyStep{},
+		branches,
 		o,
 	)
 }
@@ -65,6 +71,7 @@ func executeSteps(
 	finalizeCfg FinalizeStep,
 	signCfg SignStep,
 	verifyCfg VerifyStep,
+	branches map[string][]Step,
 	opts ExecuteOptions,
 ) (Result, error) {
 	publishFirst := false
@@ -72,7 +79,7 @@ func executeSteps(
 	for i, step := range steps {
 		switch step.Action {
 		case "load", "local", "remote", "fetch", "_fetch":
-			loaded, attrs, docs, err := runLoad(step.Load, baseDir, sourceMap, sourceAttrs, sourceXML)
+			loaded, attrs, docs, err := runLoad(step.Load, baseDir, outputDir, sourceMap, sourceAttrs, sourceXML, branches, opts)
 			if err != nil {
 				return Result{}, fmt.Errorf("step %d load: %w", i, err)
 			}
@@ -184,6 +191,7 @@ func executeSteps(
 				cloneAttrs(currentAttrs),
 				cloneEntityXML(currentXML),
 				finalizeCfg, signCfg, verifyCfg,
+				branches,
 				opts,
 			)
 			if err != nil {
@@ -193,6 +201,7 @@ func executeSteps(
 			return Result{
 				Entities:  append([]string(nil), current...),
 				EntityXML: cloneEntityXML(currentXML),
+				Attrs:     cloneAttrs(currentAttrs),
 				Finalize:  finalizeCfg,
 				Sign:      signCfg,
 				Verify:    verifyCfg,
@@ -209,6 +218,7 @@ func executeSteps(
 	return Result{
 		Entities:  append([]string(nil), current...),
 		EntityXML: cloneEntityXML(currentXML),
+		Attrs:     cloneAttrs(currentAttrs),
 		Finalize:  finalizeCfg,
 		Sign:      signCfg,
 		Verify:    verifyCfg,
@@ -222,7 +232,7 @@ func runFilter(cfg SelectStep, current []string, currentAttrs map[string]EntityA
 	return runSelect(cfg, current, currentAttrs, currentXML, localSourceMap, localSourceAttrs, localSourceXML)
 }
 
-func runLoad(cfg LoadStep, baseDir string, sourceMap map[string][]string, sourceAttrs map[string]map[string]EntityAttributes, sourceXML map[string]map[string]string) ([]string, map[string]EntityAttributes, map[string]string, error) {
+func runLoad(cfg LoadStep, baseDir string, outputDir string, sourceMap map[string][]string, sourceAttrs map[string]map[string]EntityAttributes, sourceXML map[string]map[string]string, branches map[string][]Step, opts ExecuteOptions) ([]string, map[string]EntityAttributes, map[string]string, error) {
 	applyVia := func(ids []string, attrs map[string]EntityAttributes, docs map[string]string) ([]string, map[string]EntityAttributes, map[string]string, error) {
 		if len(cfg.Via) == 0 {
 			return ids, attrs, docs, nil
@@ -340,6 +350,40 @@ func runLoad(cfg LoadStep, baseDir string, sourceMap map[string][]string, source
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("load source entry: %w", err)
 			}
+
+			// Apply via-branch preprocessing if specified (GAP-12).
+			if entry.Via != "" {
+				branchName := strings.ToLower(strings.TrimSpace(entry.Via))
+				branchSteps, ok := branches[branchName]
+				if !ok {
+					return nil, nil, nil, fmt.Errorf("load: via: unknown branch %q", entry.Via)
+				}
+				branchResult, berr := executeSteps(
+					branchSteps, outputDir, baseDir,
+					make(map[string][]string),
+					make(map[string]map[string]EntityAttributes),
+					make(map[string]map[string]string),
+					entryData.EntityIDs,
+					entryData.Attributes,
+					entryData.EntityXML,
+					FinalizeStep{}, SignStep{}, VerifyStep{},
+					branches,
+					opts,
+				)
+				if berr != nil {
+					return nil, nil, nil, fmt.Errorf("via branch %q: %w", entry.Via, berr)
+				}
+				resultAttrs := branchResult.Attrs
+				if resultAttrs == nil {
+					resultAttrs = make(map[string]EntityAttributes)
+				}
+				entryData = sourceData{
+					EntityIDs:  branchResult.Entities,
+					Attributes: resultAttrs,
+					EntityXML:  branchResult.EntityXML,
+				}
+			}
+
 			merge(entryData)
 			if entry.As != "" {
 				sourceMap[entry.As] = append([]string(nil), entryData.EntityIDs...)

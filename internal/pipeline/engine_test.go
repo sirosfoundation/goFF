@@ -2361,3 +2361,85 @@ func TestExecuteLoadSourceEntryURLWithAlias(t *testing.T) {
 		t.Fatalf("expected entity from source entry in output, got: %s", string(b))
 	}
 }
+
+// TestExecuteLoadViaRunsBranchOnSource verifies that a SourceEntry with Via set
+// routes the loaded entities through the named preprocessing branch before merging.
+func TestExecuteLoadViaRunsBranchOnSource(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/samlmetadata+xml")
+		fmt.Fprint(w, `<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata">
+  <EntityDescriptor entityID="https://idp.example.org/via-test">
+    <IDPSSODescriptor><SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.org/sso"/></IDPSSODescriptor>
+  </EntityDescriptor>
+</EntitiesDescriptor>`)
+	}))
+	defer ts.Close()
+
+	// Build a File directly so we can populate Branches without a YAML fixture.
+	p := File{
+		Pipeline: []Step{
+			{Action: "load", Load: LoadStep{
+				Sources: []SourceEntry{{URL: ts.URL + "/fed.xml", Via: "normalize"}},
+			}},
+			{Action: "publish", Publish: PublishStep{Output: "result.txt"}},
+		},
+		Branches: map[string][]Step{
+			"normalize": {
+				{Action: "setattr", SetAttr: SetAttrStep{
+					Name:  "country",
+					Value: "SE",
+				}},
+			},
+		},
+	}
+
+	outDir := t.TempDir()
+	res, err := Execute(p, outDir)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	if len(res.Entities) != 1 || res.Entities[0] != "https://idp.example.org/via-test" {
+		t.Fatalf("unexpected entities: %v", res.Entities)
+	}
+
+	// The via branch should have applied setattr, which adds a country:SE text token.
+	if res.Attrs != nil {
+		if a, ok := res.Attrs["https://idp.example.org/via-test"]; ok {
+			if _, hasTok := a.TextTokens["country:se"]; !hasTok {
+				t.Errorf("expected country:se token from via branch, got tokens: %v", a.TextTokens)
+			}
+		}
+	}
+}
+
+// TestExecuteLoadViaUnknownBranchErrors verifies an error is returned for a
+// missing branch referenced by Via.
+func TestExecuteLoadViaUnknownBranchErrors(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/samlmetadata+xml")
+		fmt.Fprint(w, `<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata">
+  <EntityDescriptor entityID="https://idp.example.org/x">
+    <IDPSSODescriptor><SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.org/sso"/></IDPSSODescriptor>
+  </EntityDescriptor>
+</EntitiesDescriptor>`)
+	}))
+	defer ts.Close()
+
+	p := File{
+		Pipeline: []Step{
+			{Action: "load", Load: LoadStep{
+				Sources: []SourceEntry{{URL: ts.URL + "/fed.xml", Via: "nonexistent"}},
+			}},
+		},
+		Branches: map[string][]Step{},
+	}
+
+	_, err := Execute(p, t.TempDir())
+	if err == nil {
+		t.Fatal("expected error for unknown via branch, got nil")
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("expected error to mention branch name, got: %v", err)
+	}
+}
