@@ -228,22 +228,33 @@ Example (MDQ-compatible per-entity files):
 
 ### GAP-11 · `when <custom-name>:` pre-processing branches
 
-**Status:** ✅ Closed
+**Status:** ✅ Closed (correctly)
 
-Named branches (`when normalize:`, `when edugain:`, etc.) are now extracted by
-`ParseFile` into `File.Branches` during a pre-pass over the YAML.  They can then
-be referenced by `via branchname` on individual load sources (see GAP-12).
+`when <name>:` blocks are now fully preserved as `WhenStep` nodes in the pipeline
+AST (parser no longer unrolls or drops them).  At runtime, `when name:` fires iff
+`name` is present in the pipeline's active state labels — matching pyFF's
+`req.state.get(condition)` semantics exactly.
+
+Default batch execution sets `states = {update, x, true, always}` so that all
+historical batch-mode conditions fire.  Named preprocessing branches (`when
+normalize:`, `when edugain:`) do not fire unless that label is present in states,
+which only happens during a `via`-invoked re-run (see GAP-12).
 
 ---
 
 ### GAP-12 · `load: via:` branch invocation
 
-**Status:** ✅ Closed
+**Status:** ✅ Closed (correctly)
 
-Inline source tokens of the form `url via branchname` (or mapping field
-`via: branchname`) now trigger per-source branch execution: after the source is
-fetched, the named preprocessing branch is run on its entities before they are
-merged into the pipeline.  An unknown branch name is a hard error.
+The correct pyFF semantics are now implemented.  `load <url> via foo` creates a
+`PipelineCallback`-equivalent: after the source is fetched, the **full root
+pipeline** is re-executed with `states = {foo: true}` and the freshly-loaded
+entities as the initial entity set.  Any `when foo:` blocks in the pipeline then
+fire naturally.  `when update:` (and other batch labels) do not fire in a via-run.
+
+Pipelines should include `break` inside `when <name>:` bodies to stop execution
+before reaching `when update:` load steps, preventing recursive re-fetching —
+the same discipline required by pyFF.
 
 ---
 
@@ -511,26 +522,34 @@ alongside XML files.  goFF's `PublishStep` struct has no equivalent fields.
 ### GAP-11 · `when <custom-name>:` pre-processing branches
 
 **Affects:** `edugain-copy.fd`, `eidas.fd`, `test.fd`, `mdx.fd`
-**Status:** ✅ Closed
+**Status:** ✅ Closed (correctly)
 
-Named branches (`when normalize:`, `when edugain:`, `when eidas:`, `when swamid:`,
-`when sign:`) are now extracted by `ParseFile` into `File.Branches` during a
-pre-pass over the YAML.  The main `when update:` (or unconditional) pipeline is
-built as before; named branches are stored separately and invoked via the `via`
-notation (see GAP-12).
+`when <name>:` blocks are preserved as `WhenStep` nodes in the pipeline AST.
+At runtime, `when name:` fires iff `name` is present in the active state labels,
+matching pyFF's `req.state.get(condition)` semantics exactly.  All blocks —
+`when normalize:`, `when edugain:`, `when update:`, `when request:`, etc. — are
+parsed and kept; only the runtime state determines which fire.
+
+Request-side bodies (`when request:`, `when accept:`) may contain `emit`/`merge`
+steps; these are silently skipped in batch execution (they are no-ops).
 
 ---
 
 ### GAP-12 · `load: via:` branch invocation
 
 **Affects:** `mdx.fd`, `edugain-copy.fd`
-**Status:** ✅ Closed
+**Status:** ✅ Closed (correctly)
 
-pyFF's `via` notation — `url via branchname` — is now fully supported.  After a
-source entry is fetched, the named preprocessing branch is run on its entity set
-before the result is merged into the pipeline.  The inline token form
-(`url via branchname`) and the mapping form (`via: branchname`) are both parsed.
-An unknown branch name is a hard error.
+The full pyFF semantics are implemented.  `load <url> via foo` re-runs the
+**root pipeline** from the top with `states = {foo: true}` and the freshly-loaded
+entities as the initial entity set.  `when foo:` blocks fire naturally; `when
+update:` blocks do not.  An unknown `via` label is not an error — the pipeline
+simply runs with no matching guards, passing entities through unchanged.
+
+The canonical pyFF pattern — `when normalize: ... break` followed by `when
+update: load ... via normalize` — works correctly: `break` inside the normalize
+body propagates outward (matching pyFF's `req.done` flag) and stops the pipeline
+before the `when update:` load step is reached.
 
 ---
 

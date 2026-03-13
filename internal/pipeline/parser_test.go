@@ -25,49 +25,74 @@ func TestParseFileSupportsWhenUpdateWrapper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseFile returned error: %v", err)
 	}
-	if len(p.Pipeline) != 2 {
-		t.Fatalf("expected 2 expanded steps, got %d", len(p.Pipeline))
+	// when update: is preserved as a single WhenStep (not unrolled at parse time).
+	if len(p.Pipeline) != 1 {
+		t.Fatalf("expected 1 when step, got %d", len(p.Pipeline))
 	}
-	if p.Pipeline[0].Action != "load" || p.Pipeline[1].Action != "select" {
-		t.Fatalf("unexpected expanded actions: %#v", []string{p.Pipeline[0].Action, p.Pipeline[1].Action})
+	if p.Pipeline[0].Action != "when" {
+		t.Fatalf("expected when step, got %q", p.Pipeline[0].Action)
+	}
+	if p.Pipeline[0].When.Condition != "update" {
+		t.Fatalf("expected condition 'update', got %q", p.Pipeline[0].When.Condition)
+	}
+	// body should contain load + select
+	if len(p.Pipeline[0].When.Body) != 2 {
+		t.Fatalf("expected 2 body steps, got %d", len(p.Pipeline[0].When.Body))
+	}
+	if p.Pipeline[0].When.Body[0].Action != "load" || p.Pipeline[0].When.Body[1].Action != "select" {
+		t.Fatalf("unexpected body actions: %v %v",
+			p.Pipeline[0].When.Body[0].Action, p.Pipeline[0].When.Body[1].Action)
 	}
 }
 
-func TestParseFileSkipsNonUpdateWhenBranches(t *testing.T) {
+func TestParseFilePreservesAllWhenBranches(t *testing.T) {
 	fixture := filepath.Join("..", "..", "tests", "fixtures", "pipelines", "pyff-when-dual-entry.yaml")
 	p, err := ParseFile(fixture)
 	if err != nil {
 		t.Fatalf("ParseFile returned error: %v", err)
 	}
-	if len(p.Pipeline) != 1 {
-		t.Fatalf("expected only update branch steps, got %d", len(p.Pipeline))
+	// All three when blocks are now preserved as WhenStep nodes.
+	if len(p.Pipeline) != 3 {
+		t.Fatalf("expected 3 when steps, got %d", len(p.Pipeline))
 	}
-	if p.Pipeline[0].Action != "load" {
-		t.Fatalf("expected update branch load action, got %q", p.Pipeline[0].Action)
+	for i, step := range p.Pipeline {
+		if step.Action != "when" {
+			t.Errorf("step %d: expected 'when', got %q", i, step.Action)
+		}
+	}
+	if p.Pipeline[0].When.Condition != "update" {
+		t.Errorf("step 0 condition: want 'update', got %q", p.Pipeline[0].When.Condition)
+	}
+	if p.Pipeline[1].When.Condition != "request" {
+		t.Errorf("step 1 condition: want 'request', got %q", p.Pipeline[1].When.Condition)
+	}
+	if p.Pipeline[2].When.Condition != "accept" {
+		t.Errorf("step 2 condition: want 'accept', got %q", p.Pipeline[2].When.Condition)
 	}
 }
 
-func TestParseFileExtractsNamedBranches(t *testing.T) {
+func TestParseFileNamedBranchesInPipeline(t *testing.T) {
 	fixture := filepath.Join("..", "..", "tests", "fixtures", "pipelines", "pyff-when-named-branch.yaml")
 	p, err := ParseFile(fixture)
 	if err != nil {
 		t.Fatalf("ParseFile returned error: %v", err)
 	}
-	// Only the "update" branch expands into the pipeline; named branches must be in Branches.
-	if len(p.Pipeline) != 2 { // load + break
-		t.Fatalf("expected 2 update steps, got %d: %v", len(p.Pipeline), p.Pipeline)
+	// All branches — normalize, edugain, update — are preserved as WhenStep nodes.
+	if len(p.Pipeline) != 3 {
+		t.Fatalf("expected 3 when steps, got %d: %v", len(p.Pipeline), p.Pipeline)
 	}
-	if p.Branches == nil {
-		t.Fatal("expected Branches to be populated")
+	conditions := map[string]bool{}
+	for _, step := range p.Pipeline {
+		if step.Action != "when" {
+			t.Errorf("expected 'when' action, got %q", step.Action)
+			continue
+		}
+		conditions[step.When.Condition] = true
 	}
-	if _, ok := p.Branches["normalize"]; !ok {
-		t.Error("expected branch 'normalize' in Branches")
-	}
-	if _, ok := p.Branches["edugain"]; !ok {
-		t.Error("expected branch 'edugain' in Branches")
-	}
-	if len(p.Branches["normalize"]) != 1 || p.Branches["normalize"][0].Action != "setattr" {
-		t.Errorf("unexpected normalize branch steps: %v", p.Branches["normalize"])
+	for _, want := range []string{"normalize", "edugain", "update"} {
+		if !conditions[want] {
+			t.Errorf("expected branch %q to be present in pipeline", want)
+		}
 	}
 }
 
@@ -569,20 +594,20 @@ func TestParseFileRejectsInvalidSortArgumentKind(t *testing.T) {
 	}
 }
 
-func TestParseFileRejectsKnownUnsupportedAction(t *testing.T) {
-	dir := t.TempDir()
-	fixture := filepath.Join(dir, "pipeline.yaml")
-	yaml := "- load\n- signcerts\n"
-	if err := os.WriteFile(fixture, []byte(yaml), 0o600); err != nil {
-		t.Fatalf("failed writing fixture: %v", err)
-	}
-
-	_, err := ParseFile(fixture)
-	if err == nil {
-		t.Fatal("expected ParseFile error for unsupported action signcerts")
-	}
-	if !strings.Contains(err.Error(), "signcerts") {
-		t.Fatalf("unexpected error: %v", err)
+func TestParseFileAcceptsKnownNoOpActions(t *testing.T) {
+	// signcerts/emit/merge are now accepted in YAML (they may appear inside
+	// `when request:` or `when accept:` bodies) and are silently skipped at
+	// runtime.  ParseFile must not return an error for them.
+	for _, action := range []string{"signcerts", "emit", "merge"} {
+		dir := t.TempDir()
+		fixture := filepath.Join(dir, "pipeline.yaml")
+		content := "- load\n- " + action + "\n"
+		if err := os.WriteFile(fixture, []byte(content), 0o600); err != nil {
+			t.Fatalf("failed writing fixture: %v", err)
+		}
+		if _, err := ParseFile(fixture); err != nil {
+			t.Errorf("ParseFile should accept no-op action %q, got error: %v", action, err)
+		}
 	}
 }
 

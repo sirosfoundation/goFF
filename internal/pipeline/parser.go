@@ -31,11 +31,6 @@ func ParseFile(path string) (File, error) {
 		return File{}, fmt.Errorf("pipeline file must be a YAML sequence of steps")
 	}
 
-	// Pre-pass: extract named preprocessing branches from `when <name>:` nodes
-	// that are not update/always/true/x or request-side branches.
-	// These can be invoked via SourceEntry.Via during load.
-	branches := extractNamedBranches(body)
-
 	steps, err := parsePipelineSequence(body)
 	if err != nil {
 		return File{}, fmt.Errorf("parse pipeline step list: %w", err)
@@ -45,36 +40,7 @@ func ParseFile(path string) (File, error) {
 		return File{}, fmt.Errorf("pipeline must contain at least one step")
 	}
 
-	return File{Pipeline: steps, Branches: branches, BaseDir: filepath.Dir(path)}, nil
-}
-
-// extractNamedBranches scans a top-level pipeline sequence and returns a map of
-// name → steps for every `when <name>:` node that is not an update/always/true/x
-// branch and not a request-side branch (request, accept, path).
-func extractNamedBranches(seq *yaml.Node) map[string][]Step {
-	branches := make(map[string][]Step)
-	for _, n := range seq.Content {
-		if !isWhenNode(n) {
-			continue
-		}
-		cond, branchBody := whenNodeParts(n)
-		c := strings.ToLower(strings.TrimSpace(cond))
-		if shouldIncludeWhen(c) {
-			continue // update/always/true/x — goes into main pipeline
-		}
-		if c == "request" || strings.HasPrefix(c, "accept ") || strings.HasPrefix(c, "path ") {
-			continue // request-side branches are not preprocessing branches
-		}
-		if branchBody.Kind != yaml.SequenceNode {
-			continue // skip malformed nodes silently
-		}
-		branchSteps, err := parsePipelineSequence(branchBody)
-		if err != nil {
-			continue // skip branches that can't parse (may contain unsupported actions)
-		}
-		branches[c] = branchSteps
-	}
-	return branches
+	return File{Pipeline: steps, BaseDir: filepath.Dir(path)}, nil
 }
 
 func parsePipelineSequence(seq *yaml.Node) ([]Step, error) {
@@ -94,16 +60,28 @@ func parsePipelineSequence(seq *yaml.Node) ([]Step, error) {
 	return out, nil
 }
 
+// expandStepNode turns a single YAML node into one or more Steps.
+// when-nodes are preserved as a Step{Action:"when", When:WhenStep{...}};
+// all other nodes are decoded normally.
 func expandStepNode(node *yaml.Node) ([]Step, error) {
 	if isWhenNode(node) {
 		cond, body := whenNodeParts(node)
-		if !shouldIncludeWhen(cond) {
-			return nil, nil
+		parts := strings.Fields(strings.ToLower(strings.TrimSpace(cond)))
+		if len(parts) == 0 {
+			return nil, fmt.Errorf("when node has empty condition")
 		}
 		if body.Kind != yaml.SequenceNode {
 			return nil, fmt.Errorf("when %q body must be a step sequence", cond)
 		}
-		return parsePipelineSequence(body)
+		bodySteps, err := parsePipelineSequence(body)
+		if err != nil {
+			return nil, fmt.Errorf("when %q body: %w", cond, err)
+		}
+		return []Step{{Action: "when", When: WhenStep{
+			Condition: parts[0],
+			Values:    parts[1:],
+			Body:      bodySteps,
+		}}}, nil
 	}
 
 	var s Step
@@ -124,19 +102,6 @@ func whenNodeParts(node *yaml.Node) (string, *yaml.Node) {
 	raw := strings.TrimSpace(node.Content[0].Value)
 	cond := strings.TrimSpace(strings.TrimPrefix(raw, "when"))
 	return cond, node.Content[1]
-}
-
-func shouldIncludeWhen(cond string) bool {
-	c := strings.ToLower(strings.TrimSpace(cond))
-	switch {
-	case c == "", c == "update", c == "x", c == "true", c == "always":
-		return true
-	case c == "request", strings.HasPrefix(c, "accept "):
-		return false
-	default:
-		// Update executor only includes explicit update-like branches.
-		return false
-	}
 }
 
 // UnmarshalYAML supports two formats:
@@ -415,12 +380,13 @@ func validateAction(action string) error {
 		"discojson", "discojson_sp", "discojson_idp",
 		"xslt",
 		"fork", "pipe", "parsecopy",
-		"break", "end":
+		"break", "end",
+		"when",
+		// Request-side / no-op actions: accepted in pipeline YAML (e.g. inside
+		// `when request:` or `when accept:` bodies) but silently ignored at
+		// runtime in batch/update execution.
+		"emit", "signcerts", "merge":
 		return nil
-	case "signcerts",
-		"merge",
-		"emit":
-		return fmt.Errorf("action %q is known but not supported in goFF update pipelines", action)
 	default:
 		return fmt.Errorf("unknown pipeline action %q", action)
 	}

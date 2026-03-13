@@ -7,13 +7,18 @@ import (
 )
 
 // File represents a pipeline YAML file.
-// Branches holds named preprocessing branches extracted from `when <name>:` nodes
-// that are not update/always/true/x branches.  They can be invoked per-source via
-// the SourceEntry.Via field.
 type File struct {
-	Pipeline []Step            `yaml:"pipeline"`
-	Branches map[string][]Step `yaml:"-"`
-	BaseDir  string            `yaml:"-"`
+	Pipeline []Step `yaml:"pipeline"`
+	BaseDir  string `yaml:"-"`
+}
+
+// WhenStep represents a conditional guard: execute Body only when Condition is
+// present (with optional Values) in the pipeline's active state labels.
+// This models pyFF's `when <condition> [values]:` pipe.
+type WhenStep struct {
+	Condition string   // e.g. "update", "normalize", "accept"
+	Values    []string // optional multi-word values, e.g. ["application/json"]
+	Body      []Step
 }
 
 // Source is a named metadata source used by load steps.
@@ -49,6 +54,7 @@ type Step struct {
 	DiscoJSON   DiscoJSONStep
 	XSLT        XSLTStep
 	Fork        ForkStep
+	When        WhenStep
 }
 
 // SourceEntry is a single source item within a LoadStep, supporting per-source

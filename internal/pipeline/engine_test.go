@@ -2363,7 +2363,10 @@ func TestExecuteLoadSourceEntryURLWithAlias(t *testing.T) {
 }
 
 // TestExecuteLoadViaRunsBranchOnSource verifies that a SourceEntry with Via set
-// routes the loaded entities through the named preprocessing branch before merging.
+// re-runs the root pipeline with state={viaLabel:true}, causing `when normalize:`
+// to fire and preprocessing the loaded entities before they are merged.
+// The load step is inside `when update:` (like real pyFF pipelines), which prevents
+// recursive re-loading during the via-run ("update" not in via-states).
 func TestExecuteLoadViaRunsBranchOnSource(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/samlmetadata+xml")
@@ -2375,21 +2378,32 @@ func TestExecuteLoadViaRunsBranchOnSource(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	// Build a File directly so we can populate Branches without a YAML fixture.
+	// Pipeline mirrors real pyFF structure:
+	//   - when normalize: runs setattr + break (preprocessing branch)
+	//   - when update:   runs load (via normalize) + publish
+	// Via-run with {normalize:true}: when normalize: fires → setattr → break stops
+	//   before when update: is reached.  Result = enriched entities.
 	p := File{
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{
-				Sources: []SourceEntry{{URL: ts.URL + "/fed.xml", Via: "normalize"}},
+			{Action: "when", When: WhenStep{
+				Condition: "normalize",
+				Body: []Step{
+					{Action: "setattr", SetAttr: SetAttrStep{
+						Name:  "country",
+						Value: "SE",
+					}},
+					{Action: "break"},
+				},
 			}},
-			{Action: "publish", Publish: PublishStep{Output: "result.txt"}},
-		},
-		Branches: map[string][]Step{
-			"normalize": {
-				{Action: "setattr", SetAttr: SetAttrStep{
-					Name:  "country",
-					Value: "SE",
-				}},
-			},
+			{Action: "when", When: WhenStep{
+				Condition: "update",
+				Body: []Step{
+					{Action: "load", Load: LoadStep{
+						Sources: []SourceEntry{{URL: ts.URL + "/fed.xml", Via: "normalize"}},
+					}},
+					{Action: "publish", Publish: PublishStep{Output: "result.txt"}},
+				},
+			}},
 		},
 	}
 
@@ -2403,7 +2417,7 @@ func TestExecuteLoadViaRunsBranchOnSource(t *testing.T) {
 		t.Fatalf("unexpected entities: %v", res.Entities)
 	}
 
-	// The via branch should have applied setattr, which adds a country:SE text token.
+	// The normalize branch should have applied setattr, adding a country:se token.
 	if res.Attrs != nil {
 		if a, ok := res.Attrs["https://idp.example.org/via-test"]; ok {
 			if _, hasTok := a.TextTokens["country:se"]; !hasTok {
@@ -2413,9 +2427,10 @@ func TestExecuteLoadViaRunsBranchOnSource(t *testing.T) {
 	}
 }
 
-// TestExecuteLoadViaUnknownBranchErrors verifies an error is returned for a
-// missing branch referenced by Via.
-func TestExecuteLoadViaUnknownBranchErrors(t *testing.T) {
+// TestExecuteLoadViaUnknownLabelPassesThrough verifies that a Via label for which
+// no matching `when` guard exists simply passes entities through unmodified
+// (no error), matching pyFF's behaviour where the pipeline runs but nothing fires.
+func TestExecuteLoadViaUnknownLabelPassesThrough(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/samlmetadata+xml")
 		fmt.Fprint(w, `<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata">
@@ -2426,20 +2441,73 @@ func TestExecuteLoadViaUnknownBranchErrors(t *testing.T) {
 	}))
 	defer ts.Close()
 
+	// Load is inside when update: so the via-run (state={nonexistent:true})
+	// does not re-trigger the load step.  No when guard matches nonexistent,
+	// so entities pass through the via-run unchanged.
 	p := File{
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{
-				Sources: []SourceEntry{{URL: ts.URL + "/fed.xml", Via: "nonexistent"}},
+			{Action: "when", When: WhenStep{
+				Condition: "update",
+				Body: []Step{
+					{Action: "load", Load: LoadStep{
+						Sources: []SourceEntry{{URL: ts.URL + "/fed.xml", Via: "nonexistent"}},
+					}},
+				},
 			}},
 		},
-		Branches: map[string][]Step{},
 	}
 
-	_, err := Execute(p, t.TempDir())
-	if err == nil {
-		t.Fatal("expected error for unknown via branch, got nil")
+	res, err := Execute(p, t.TempDir())
+	if err != nil {
+		t.Fatalf("expected no error for unknown via label, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "nonexistent") {
-		t.Errorf("expected error to mention branch name, got: %v", err)
+	// Entities pass through unmodified.
+	if len(res.Entities) != 1 || res.Entities[0] != "https://idp.example.org/x" {
+		t.Fatalf("expected entity to pass through, got: %v", res.Entities)
+	}
+}
+
+// TestWhenStepFiresOnlyWhenStateMatches verifies that a when step executes its
+// body only when the condition label is present in the active states.
+func TestWhenStepFiresOnlyWhenStateMatches(t *testing.T) {
+	base := File{
+		Pipeline: []Step{
+			{Action: "load", Load: LoadStep{Entities: []string{"https://idp.example.org/idp"}}},
+			{Action: "when", When: WhenStep{
+				Condition: "normalize",
+				Body: []Step{
+					{Action: "setattr", SetAttr: SetAttrStep{Name: "country", Value: "SE"}},
+				},
+			}},
+		},
+	}
+
+	// With default states (update only), normalize branch must NOT fire.
+	res, err := Execute(base, t.TempDir())
+	if err != nil {
+		t.Fatalf("Execute (default states) returned error: %v", err)
+	}
+	if res.Attrs != nil {
+		if a, ok := res.Attrs["https://idp.example.org/idp"]; ok {
+			if _, hasTok := a.TextTokens["country:se"]; hasTok {
+				t.Error("normalize branch fired with update-only states — should not have")
+			}
+		}
+	}
+
+	// With normalize in states, branch MUST fire.
+	res2, err := Execute(base, t.TempDir(), ExecuteOptions{States: map[string]bool{"normalize": true}})
+	if err != nil {
+		t.Fatalf("Execute (normalize states) returned error: %v", err)
+	}
+	if res2.Attrs == nil {
+		t.Fatal("expected non-nil Attrs with normalize state")
+	}
+	a, ok := res2.Attrs["https://idp.example.org/idp"]
+	if !ok {
+		t.Fatal("expected entity in Attrs")
+	}
+	if _, hasTok := a.TextTokens["country:se"]; !hasTok {
+		t.Errorf("expected country:se token after normalize branch, got: %v", a.TextTokens)
 	}
 }

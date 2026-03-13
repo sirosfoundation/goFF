@@ -31,7 +31,17 @@ type ExecuteOptions struct {
 	// Progress, if non-nil, is called after each step with the step index,
 	// action name, and a brief status message.
 	Progress func(step int, action, msg string)
+	// States is the set of active pipeline labels used to evaluate `when`
+	// guards.  Nil defaults to {"update": true}, which is the standard batch
+	// execution mode.  Set explicitly when invoking the pipeline in a
+	// non-update mode (e.g. via-runs use {viaLabel: true}).
+	States map[string]bool
 }
+
+// errBreak is a sentinel returned by executeSteps when a `break` or `end` step
+// is reached.  It propagates through nested when-body executions so that `break`
+// inside a when body stops the outer pipeline, matching pyFF's req.done semantics.
+var errBreak = fmt.Errorf("break")
 
 // Execute runs a parsed pipeline file.
 func Execute(p File, outputDir string, opts ...ExecuteOptions) (Result, error) {
@@ -39,11 +49,19 @@ func Execute(p File, outputDir string, opts ...ExecuteOptions) (Result, error) {
 	if len(opts) > 0 {
 		o = opts[0]
 	}
-	branches := p.Branches
-	if branches == nil {
-		branches = make(map[string][]Step)
+	states := o.States
+	if len(states) == 0 {
+		// Default batch-mode states: update, x, true, always are all treated as
+		// unconditionally active in batch execution, matching the historical pyFF
+		// convention where any of these labels indicates a batch/update run.
+		states = map[string]bool{
+			"update": true,
+			"x":      true,
+			"true":   true,
+			"always": true,
+		}
 	}
-	return executeSteps(
+	res, err := executeSteps(
 		p.Pipeline, outputDir, p.BaseDir,
 		make(map[string][]string),
 		make(map[string]map[string]EntityAttributes),
@@ -52,14 +70,21 @@ func Execute(p File, outputDir string, opts ...ExecuteOptions) (Result, error) {
 		make(map[string]EntityAttributes),
 		make(map[string]string),
 		FinalizeStep{}, SignStep{}, VerifyStep{},
-		branches,
+		p.Pipeline, states,
 		o,
 	)
+	if err == errBreak {
+		err = nil
+	}
+	return res, err
 }
 
 // executeSteps runs a sequence of pipeline steps starting from the provided
-// initial state.  It is called recursively by fork/pipe/parsecopy to run
-// sub-pipelines on a copy of the current state.
+// initial state.  It is called recursively by fork/pipe/parsecopy and when
+// bodies to run sub-pipelines.
+// rootPipeline is the root File.Pipeline; it is passed unchanged through calls
+// so that `via` re-runs can always reference the full pipeline.
+// states is the set of active labels used to evaluate `when` guards.
 func executeSteps(
 	steps []Step, outputDir, baseDir string,
 	sourceMap map[string][]string,
@@ -71,7 +96,8 @@ func executeSteps(
 	finalizeCfg FinalizeStep,
 	signCfg SignStep,
 	verifyCfg VerifyStep,
-	branches map[string][]Step,
+	rootPipeline []Step,
+	states map[string]bool,
 	opts ExecuteOptions,
 ) (Result, error) {
 	publishFirst := false
@@ -79,7 +105,7 @@ func executeSteps(
 	for i, step := range steps {
 		switch step.Action {
 		case "load", "local", "remote", "fetch", "_fetch":
-			loaded, attrs, docs, err := runLoad(step.Load, baseDir, outputDir, sourceMap, sourceAttrs, sourceXML, branches, opts)
+			loaded, attrs, docs, err := runLoad(step.Load, baseDir, outputDir, sourceMap, sourceAttrs, sourceXML, rootPipeline, states, opts)
 			if err != nil {
 				return Result{}, fmt.Errorf("step %d load: %w", i, err)
 			}
@@ -180,6 +206,68 @@ func executeSteps(
 			currentXML = newXML
 			syncCurrentAttrsToSources(current, currentAttrs, sourceAttrs)
 			publishFirst = false
+		case "when":
+			// Evaluate the condition against active states, matching pyFF's
+			// req.state.get(condition) semantics.
+			cond := step.When.Condition
+			match := states[cond]
+			if match && len(step.When.Values) > 0 {
+				// Multi-word condition (e.g. "accept application/json"):
+				// require the state value to match one of the specified values.
+				// In batch mode these conditions never carry values, so this
+				// branch is effectively unreachable in normal operation.
+				match = false
+				for _, v := range step.When.Values {
+					if states[v] || states[cond+":"+v] {
+						match = true
+						break
+					}
+				}
+			}
+			if match {
+				// Execute the body inline: pass the same sourceMap/sourceAttrs/
+				// sourceXML maps (not clones) so that aliases registered inside
+				// the body are visible to subsequent outer steps, matching
+				// pyFF's iprocess(req) semantics where req is shared.
+				sub, err := executeSteps(
+					step.When.Body, outputDir, baseDir,
+					sourceMap, sourceAttrs, sourceXML,
+					current, currentAttrs, currentXML,
+					finalizeCfg, signCfg, verifyCfg,
+					rootPipeline, states, opts,
+				)
+				if err != nil && err != errBreak {
+					return Result{}, fmt.Errorf("step %d when %q: %w", i, cond, err)
+				}
+				current = sub.Entities
+				currentAttrs = sub.Attrs
+				if currentAttrs == nil {
+					currentAttrs = make(map[string]EntityAttributes)
+				}
+				currentXML = sub.EntityXML
+				if currentXML == nil {
+					currentXML = make(map[string]string)
+				}
+				finalizeCfg = sub.Finalize
+				signCfg = sub.Sign
+				verifyCfg = sub.Verify
+				publishFirst = false
+				if err == errBreak {
+					// break inside a when body stops the outer pipeline too,
+					// matching pyFF's req.done propagation.
+					return Result{
+						Entities:  append([]string(nil), current...),
+						EntityXML: cloneEntityXML(currentXML),
+						Attrs:     cloneAttrs(currentAttrs),
+						Finalize:  finalizeCfg,
+						Sign:      signCfg,
+						Verify:    verifyCfg,
+					}, errBreak
+				}
+			}
+			publishFirst = false
+		case "emit", "signcerts", "merge":
+			// Request-side / no-op actions: silently ignored in batch execution.
 		case "fork", "pipe", "parsecopy":
 			// Run sub-pipeline on a snapshot of current state; outer state is unchanged.
 			_, err := executeSteps(
@@ -191,13 +279,16 @@ func executeSteps(
 				cloneAttrs(currentAttrs),
 				cloneEntityXML(currentXML),
 				finalizeCfg, signCfg, verifyCfg,
-				branches,
+				rootPipeline, states,
 				opts,
 			)
-			if err != nil {
+			if err != nil && err != errBreak {
 				return Result{}, fmt.Errorf("step %d fork: %w", i, err)
 			}
 		case "break", "end":
+			// Return current state as a successful result via errBreak sentinel.
+			// errBreak propagates outward through when-body executions (matching
+			// pyFF's req.done flag) and is stripped to nil by Execute.
 			return Result{
 				Entities:  append([]string(nil), current...),
 				EntityXML: cloneEntityXML(currentXML),
@@ -205,7 +296,7 @@ func executeSteps(
 				Finalize:  finalizeCfg,
 				Sign:      signCfg,
 				Verify:    verifyCfg,
-			}, nil
+			}, errBreak
 		default:
 			return Result{}, fmt.Errorf("step %d: unsupported action %q", i, step.Action)
 		}
@@ -232,7 +323,7 @@ func runFilter(cfg SelectStep, current []string, currentAttrs map[string]EntityA
 	return runSelect(cfg, current, currentAttrs, currentXML, localSourceMap, localSourceAttrs, localSourceXML)
 }
 
-func runLoad(cfg LoadStep, baseDir string, outputDir string, sourceMap map[string][]string, sourceAttrs map[string]map[string]EntityAttributes, sourceXML map[string]map[string]string, branches map[string][]Step, opts ExecuteOptions) ([]string, map[string]EntityAttributes, map[string]string, error) {
+func runLoad(cfg LoadStep, baseDir string, outputDir string, sourceMap map[string][]string, sourceAttrs map[string]map[string]EntityAttributes, sourceXML map[string]map[string]string, rootPipeline []Step, states map[string]bool, opts ExecuteOptions) ([]string, map[string]EntityAttributes, map[string]string, error) {
 	applyVia := func(ids []string, attrs map[string]EntityAttributes, docs map[string]string) ([]string, map[string]EntityAttributes, map[string]string, error) {
 		if len(cfg.Via) == 0 {
 			return ids, attrs, docs, nil
@@ -351,15 +442,16 @@ func runLoad(cfg LoadStep, baseDir string, outputDir string, sourceMap map[strin
 				return nil, nil, nil, fmt.Errorf("load source entry: %w", err)
 			}
 
-			// Apply via-branch preprocessing if specified (GAP-12).
+			// Apply via preprocessing if specified (GAP-12 / pyFF semantics):
+			// re-run the full root pipeline with state={viaLabel:true} and
+			// the freshly-loaded entities as the starting entity set.
+			// This matches pyFF's PipelineCallback which re-runs Plumbing.process
+			// with state={entry_point:True} and t=parsed-tree.
 			if entry.Via != "" {
-				branchName := strings.ToLower(strings.TrimSpace(entry.Via))
-				branchSteps, ok := branches[branchName]
-				if !ok {
-					return nil, nil, nil, fmt.Errorf("load: via: unknown branch %q", entry.Via)
-				}
-				branchResult, berr := executeSteps(
-					branchSteps, outputDir, baseDir,
+				viaLabel := strings.ToLower(strings.TrimSpace(entry.Via))
+				viaStates := map[string]bool{viaLabel: true}
+				viaResult, berr := executeSteps(
+					rootPipeline, outputDir, baseDir,
 					make(map[string][]string),
 					make(map[string]map[string]EntityAttributes),
 					make(map[string]map[string]string),
@@ -367,20 +459,19 @@ func runLoad(cfg LoadStep, baseDir string, outputDir string, sourceMap map[strin
 					entryData.Attributes,
 					entryData.EntityXML,
 					FinalizeStep{}, SignStep{}, VerifyStep{},
-					branches,
-					opts,
+					rootPipeline, viaStates, opts,
 				)
-				if berr != nil {
-					return nil, nil, nil, fmt.Errorf("via branch %q: %w", entry.Via, berr)
+				if berr != nil && berr != errBreak {
+					return nil, nil, nil, fmt.Errorf("via %q: %w", entry.Via, berr)
 				}
-				resultAttrs := branchResult.Attrs
+				resultAttrs := viaResult.Attrs
 				if resultAttrs == nil {
 					resultAttrs = make(map[string]EntityAttributes)
 				}
 				entryData = sourceData{
-					EntityIDs:  branchResult.Entities,
+					EntityIDs:  viaResult.Entities,
 					Attributes: resultAttrs,
-					EntityXML:  branchResult.EntityXML,
+					EntityXML:  viaResult.EntityXML,
 				}
 			}
 
