@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -33,6 +34,44 @@ type Source struct {
 	Cleanup  bool     `yaml:"cleanup"`
 }
 
+// StoreStep writes the current entity set to a content-addressable on-disk
+// directory, equivalent to pyFF's `store: directory:` pipe.  goFF executes it
+// as a `publish: {dir: Directory}` step.
+type StoreStep struct {
+	Directory string `yaml:"directory"`
+}
+
+// UnmarshalYAML supports three pyFF forms:
+//
+//	store: directory: /path          (mapping)
+//	store: - directory /path         (sequence scalar)
+//	store: /path                     (bare scalar)
+func (s *StoreStep) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.MappingNode:
+		type Alias StoreStep
+		var a Alias
+		if err := node.Decode(&a); err != nil {
+			return err
+		}
+		*s = StoreStep(a)
+	case yaml.SequenceNode:
+		for _, item := range node.Content {
+			if item.Kind == yaml.ScalarNode {
+				parts := strings.Fields(item.Value)
+				if len(parts) >= 2 && parts[0] == "directory" {
+					s.Directory = strings.Join(parts[1:], " ")
+				} else if len(parts) == 1 {
+					s.Directory = parts[0]
+				}
+			}
+		}
+	case yaml.ScalarNode:
+		s.Directory = node.Value
+	}
+	return nil
+}
+
 // Step is one pipeline operation.
 type Step struct {
 	Action      string
@@ -48,6 +87,7 @@ type Step struct {
 	Sign        SignStep
 	Verify      VerifyStep
 	Publish     PublishStep
+	Store       StoreStep
 	Stats       StatsStep
 	NodeCountry NodeCountryStep
 	CertReport  CertReportStep
@@ -55,6 +95,7 @@ type Step struct {
 	XSLT        XSLTStep
 	Fork        ForkStep
 	When        WhenStep
+	Then        string // label for `then <label>:` steps — re-runs root pipeline with {label:true}
 }
 
 // SourceEntry is a single source item within a LoadStep, supporting per-source

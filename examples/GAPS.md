@@ -1,8 +1,21 @@
 # pyFF → goFF Gap Analysis
 
 This document analyses every pyFF `examples/*.fd` pipeline and records which ones
-could not be fully translated, and why.  Closed gaps are marked ✅ with the
-implementing commit reference.
+could not be fully translated, and why.  Two dimensions are tracked:
+
+- **Functionality coverage**: Can all the semantic behaviour of the pyFF pipeline
+  be expressed in a goFF pipeline?  Governs the ✅ / ⚠️ / ❌ indicator in the table.
+- **Syntax compatibility**: Would a direct transliteration of the pyFF YAML file be
+  accepted by goFF's parser without modification?  Where pyFF syntax differs, the
+  relevant GAP entry is referenced.
+
+Closed gaps are marked ✅ with the implementing commit reference.  Items marked
+"Won't implement" are out of scope; items marked "Intentionally unsupported" are
+deliberately excluded.
+
+The **MDQ request-handling pipeline** (`when request:`, `when accept:`, `when
+path:`, and `emit`) is **out of scope** — goFF handles HTTP request routing in its
+built-in MDQ server, not the pipeline.  See the final section for details.
 
 ---
 
@@ -12,26 +25,27 @@ implementing commit reference.
 |---|---|---|
 | `uk.fd` | `basic-load-publish.yaml` | ✅ full |
 | `expiration.fd` | `certreport.yaml` | ✅ full |
-| `edugain.fd`, `load.fd` | `multiple-federations.yaml` | ✅ full |
-| `edugain-idps.fd` | `select-idps.yaml` | ✅ full (per-URL verify via SourceEntry) |
-| `filter-idps.fd` | `select-idps.yaml` | ✅ full (per-URL verify via SourceEntry) |
+| `renater.fd` | `sign-publish.yaml` | ✅ full |
+| `safire-fed.fd` | `sign-publish.yaml` | ✅ full — per-URL verify via `SourceEntry`; `store:` → `publish: dir:` (GAP-13) |
+| `edugain.fd` | `multiple-federations.yaml` | ✅ full — `store:` → `publish: dir:` (GAP-13) |
+| `load.fd` | `multiple-federations.yaml` | ✅ full — `store:` → `publish: dir:` (GAP-13) |
+| `edugain-idps.fd` | `select-idps.yaml` | ✅ full — per-URL verify via `SourceEntry`; `store:` → `publish: dir:` (GAP-13) |
+| `filter-idps.fd` | `select-idps.yaml` | ✅ full — per-URL verify via `SourceEntry` |
 | `dj.fd`, `edugain-json.fd` | `discojson.yaml` | ✅ full |
-| `edugain-discojson_sp.yaml` | `discojson-roles.yaml` | ✅ full |
-| `edugain-fork.fd` | `fork-idp-sp.yaml` | ✅ full |
-| `renater.fd`, `safire-fed.fd` | `sign-publish.yaml` | ✅ full (per-URL verify via SourceEntry) |
-| `p11.fd` | `sign-pkcs11.yaml` | ✅ full (per-URL verify via SourceEntry) |
-| `kirei2.fd` | `xslt-sign-publish.yaml` | ✅ full |
+| `edugain-fork.fd` | `fork-idp-sp.yaml` | ✅ full — `store:` → `publish: dir:` (GAP-13) |
+| `kirei2.fd` | `xslt-sign-publish.yaml` | ✅ full — `store:` → `publish: dir:` (GAP-13) |
 | `ukmulti.fd` | `finalize-aggregate.yaml` | ✅ full |
-| `test.fd`, `edugain-copy.fd` | `sub-federation-aliases.yaml` | ✅ full (setattr with selector, inline source aliases) |
-| `edugain-mdq.fd`, `batch-mdq-loop.fd` | `mdq-server-pipeline.yaml` | ⚠️ partial — `map:`, `log_entity:` omitted; `urlencode_filenames`/`ext` now supported |
-| `big.fd` | `xrd-links.yaml` | ✅ full (XRD input now supported) |
-| `mdx.fd` | — | ⚠️ partial — `fork and merge` replaced by `setattr: selector:`; XRD/alias now supported |
-| `eidas.fd` | — | ✅ full — inline source aliases and custom when-branches now fully supported |
-| `edugain-fork-and-filter.fd` | — | ✅ full (`check_xml_namespaces` and inline source aliases now supported) |
-| `ndn.fd` | — | ✅ full (XRD input now supported) |
-| `out-edugain.fd` | — | ✅ full (directory loading from prior publish:dir output now supported) |
-| `pp.fd` | — | ❌ `signcerts` action intentionally unsupported |
-| `new-renater.fd` | — | ⚠️ when update is covered by sign-publish.yaml; URLs contain typos in original |
+| `test.fd`, `edugain-copy.fd` | `sub-federation-aliases.yaml` | ✅ full — `when`/`via` semantics correct; `setattr: selector:` covers `fork and merge` |
+| `big.fd` | `xrd-links.yaml` | ✅ full — XRD input + `store:` → `publish: dir:` (GAP-13) |
+| `mdx.fd` | — | ⚠️ partial — `fork and merge` replaced by `setattr: selector:` (GAP-1 workaround); XRD/alias supported |
+| `eidas.fd` | — | ✅ full — inline source aliases and custom `when`-branches fully supported |
+| `edugain-fork-and-filter.fd` | — | ✅ full — `check_xml_namespaces` accepted; inline source aliases supported |
+| `ndn.fd` | — | ✅ full — XRD input supported; `when update:` + `via` semantics correct |
+| `out-edugain.fd` | — | ✅ full — directory-load from prior `publish: dir:` output |
+| `edugain-mdq.fd` | `mdq-server-pipeline.yaml` | ✅ full — request pipeline body is no-op in batch; batch portion works |
+| `batch-mdq-loop.fd` | `mdq-server-pipeline.yaml` | ⚠️ partial — `map:` / `log_entity:` omitted (GAP-5/6); all other constructs (`when batch:`, `then <label>:`, `drop_xsi_type:`, `store:`) now supported |
+| `new-renater.fd` | — | ⚠️ partial — batch portion covered by `sign-publish.yaml`; source URLs contain typos in original |
+| `pp.fd` | — | ❌ `signcerts` intentionally unsupported (GAP-8) |
 
 ---
 
@@ -39,13 +53,11 @@ implementing commit reference.
 
 ### GAP-1 · `fork and merge` → ✅ CLOSED via `setattr: selector:`
 
-**Implemented in:** this release
+**Implemented in:** commit `eda16f9`
 
-goFF now supports a `selector:` sub-option on `setattr` and `reginfo` steps.
+goFF supports a `selector:` sub-option on `setattr`, `reginfo`, and `pubinfo` steps.
 When set, attribute enrichment is applied only to entities matching the selector
-expression (which may be an XPath predicate, source alias, or any standard goFF
-selector string).  This replaces the pyFF `fork and merge` pattern for the most
-common use-case:
+expression (XPath predicate, source alias, or any standard goFF selector string).
 
 ```yaml
 # pyFF
@@ -61,16 +73,22 @@ common use-case:
     selector: "!//md:EntityDescriptor[md:Extensions[mdrpi:RegistrationInfo[...]]]"
 ```
 
-The `selector:` field accepts the same syntax as `select: selector:` — source
-aliases, XPath predicates, and `source!//xpath` intersection expressions.
+Note: pyFF's `fork and merge` YAML key is parsed by goFF as a regular `fork` (the
+`and merge` suffix is stripped by `baseActionName`), so it does not cause a parse
+error.  goFF's fork is sandbox-only and does not propagate results back; any
+pyFF pipeline using `fork and merge` for attribute enrichment should be translated
+to `setattr: {selector: ...}` as shown above.
+
+The request-side variant of `fork and merge` (used inside `when request:` bodies
+for MDQ sub-pipeline dispatch) is intentionally out of scope.
 
 ---
 
 ### GAP-2 · Per-URL inline verification → ✅ CLOSED via `SourceEntry`
 
-**Implemented in:** this release
+**Implemented in:** commit `eda16f9`
 
-`LoadStep` now accepts structured source entries with per-source `verify` certs:
+`LoadStep` accepts structured source entries with per-source `verify` certs:
 
 ```yaml
 # goFF — per-source cert verification via SourceEntry mapping
@@ -82,354 +100,63 @@ aliases, XPath predicates, and `source!//xpath` intersection expressions.
         verify: /path/to/safire-cert.pem
 ```
 
-Both file and URL sources are supported.  The `verify:` field takes a path to a
-PEM certificate file (same as the top-level `load: verify:` field).
-
-Note: pyFF's colon-separated SHA-1/SHA-256 fingerprint inline notation
-(`URL A6:78:5A:...`) is not supported — use a PEM cert file instead.
+**Limitation:** pyFF's colon-separated SHA-1/SHA-256 fingerprint inline notation
+(`URL A6:78:5A:...` on a single line) is not supported.  goFF requires a PEM cert
+file path.  Operators migrating from pyFF need to save the peer certificate to a
+file and reference it via `verify:`.
 
 ---
 
-### GAP-3 · Per-source inline `as` alias → ✅ CLOSED via `SourceEntry` and inline syntax
+### GAP-3 · Per-source inline `as` alias and keyword flags → ✅ CLOSED via `SourceEntry` and inline syntax
 
-**Implemented in:** this release
+**Implemented in:** commit `eda16f9`
 
-`LoadStep` now supports two ways to create per-source aliases:
+`LoadStep` supports two syntaxes for per-source aliases:
 
 **Inline scalar syntax** (mirrors pyFF):
 ```yaml
 - load:
-  - /path/to/swamid-2.0.xml as kaka
-  - /path/to/swamid-2.0.xml as kaka cleanup
+  - /path/to/fed.xml as kaka
+  - /path/to/fed.xml as kaka cleanup
   - https://example.org/fed.xml as /my-source
+  - examples/links.xrd as links via normalize
 ```
 
 **Mapping syntax** (more explicit):
 ```yaml
 - load:
-  - file: /path/to/swamid-2.0.xml
+  - file: /path/to/fed.xml
     as: kaka
     cleanup: true
   - url: https://example.org/fed.xml
     as: /my-source
     verify: cert.pem
+    via: normalize
 ```
 
-Aliases created by `load` are registered in the source map immediately after the
-source is loaded, so they can be referenced in subsequent `setattr: selector:`,
-`select:`, and `filter:` expressions.
+Aliases are registered in the source map immediately after loading, so they are
+available to subsequent `select:`, `setattr: selector:`, and `filter:` expressions.
 
 ---
 
 ### GAP-4 · XRD/XRDS input format → ✅ CLOSED
 
-**Implemented in:** this release
+**Implemented in:** commit `eda16f9`
 
-`load:` now transparently handles XRD/XRDS discovery documents.  When a loaded
-file or URL contains an XRD/XRDS document (root element `<XRDS>` or `<XRD>` in
-namespace `http://docs.oasis-open.org/ns/xri/xrd-1.0`), goFF extracts all
+`load:` transparently handles XRD/XRDS discovery documents.  When a loaded file or
+URL contains an XRD/XRDS document (root `<XRDS>` or `<XRD>` in namespace
+`http://docs.oasis-open.org/ns/xri/xrd-1.0`), goFF extracts all
 `<Link rel="urn:oasis:names:tc:SAML:2.0:metadata" href="..."/>` URLs and loads
 each one as SAML metadata.
 
-```yaml
-# goFF — XRD file now supported directly
-- load:
-  - examples/big.xrd
-  - examples/ndn-links.xrd
-```
-
 ---
 
 ### GAP-5 · `map:` — per-entity fork loop
 
-**Status:** Won't implement (low priority)
+**Status:** Won't implement
 
-pyFF's `map:` step iterates over each entity in the current working set individually,
-running a sub-pipeline for each one. This is primarily used for per-entity signing
-and per-entity file writing in MDQ pipelines.
-
-goFF's `publish: {dir:}` covers the most common use-case (writing per-entity XML
-files to a directory for static MDQ serving).
-
----
-
-### GAP-6 · `log_entity:` action not supported
-
-**Status:** Won't implement (depends on GAP-5 `map:`)
-
-goFF's `info` and `dump` actions cover aggregate-level listing.
-
----
-
-### GAP-7 · `check_xml_namespaces` action → ✅ CLOSED (no-op)
-
-**Implemented in:** this release
-
-`check_xml_namespaces` is now accepted as a valid pipeline action.  It is treated
-as a no-op: goFF validates XML namespace correctness implicitly when loading
-metadata (the XML parser rejects malformed namespace declarations).
-
----
-
-### GAP-8 · `signcerts` action not supported
-
-**Status:** Intentionally unsupported
-
-pyFF's `signcerts` adds X.509 certificate signing infrastructure to embedded
-certificates in entity XML.  It is explicitly rejected by goFF's parser as
-unsupported.
-
----
-
-### GAP-9 · pyFF on-disk store as cross-pipeline source → ✅ CLOSED via directory loading
-
-**Implemented in:** this release
-
-`load:` now supports loading from directories.  When a path points to a directory,
-goFF scans and loads every `*.xml` file within it.  This enables round-tripping
-data through `publish: {dir:}` output:
-
-```yaml
-# Pipeline A: publish per-entity XML files
-- publish:
-    dir: /tmp/edugain
-
-# Pipeline B (run later): reload from the published directory
-- load:
-  - /tmp/edugain
-```
-
----
-
-### GAP-10 · `publish:` options `urlencode_filenames`, `raw`, `ext` → ✅ PARTIALLY CLOSED
-
-**Implemented in:** this release
-
-Two of the three options are now implemented:
-
-- **`urlencode_filenames: true`** — writes MDQ-compatible URL-encoded filenames
-  (`%7Bsha256%7DHEXHASH`) instead of plain hex filenames.
-
-- **`ext: <suffix>`** — overrides the default `.xml` extension for files written
-  to the `dir:` target.
-
-- **`raw: true`** — accepted in the YAML (no parse error) but currently a no-op;
-  `publish: {dir:}` always writes raw entity XML (one `EntityDescriptor` per file).
-
-Example (MDQ-compatible per-entity files):
-```yaml
-- publish:
-    dir: entities
-    urlencode_filenames: true
-    hash_link: true
-```
-
----
-
-### GAP-11 · `when <custom-name>:` pre-processing branches
-
-**Status:** ✅ Closed (correctly)
-
-`when <name>:` blocks are now fully preserved as `WhenStep` nodes in the pipeline
-AST (parser no longer unrolls or drops them).  At runtime, `when name:` fires iff
-`name` is present in the pipeline's active state labels — matching pyFF's
-`req.state.get(condition)` semantics exactly.
-
-Default batch execution sets `states = {update, x, true, always}` so that all
-historical batch-mode conditions fire.  Named preprocessing branches (`when
-normalize:`, `when edugain:`) do not fire unless that label is present in states,
-which only happens during a `via`-invoked re-run (see GAP-12).
-
----
-
-### GAP-12 · `load: via:` branch invocation
-
-**Status:** ✅ Closed (correctly)
-
-The correct pyFF semantics are now implemented.  `load <url> via foo` creates a
-`PipelineCallback`-equivalent: after the source is fetched, the **full root
-pipeline** is re-executed with `states = {foo: true}` and the freshly-loaded
-entities as the initial entity set.  Any `when foo:` blocks in the pipeline then
-fire naturally.  `when update:` (and other batch labels) do not fire in a via-run.
-
-Pipelines should include `break` inside `when <name>:` bodies to stop execution
-before reaching `when update:` load steps, preventing recursive re-fetching —
-the same discipline required by pyFF.
-
----
-
-## Not applicable to goFF (by design)
-
-The following pyFF constructs appear in nearly all `.fd` files but are
-**intentionally outside goFF's scope** because goFF handles request routing via its
-built-in MDQ HTTP server, not the pipeline:
-
-| pyFF construct | Reason omitted |
-|---|---|
-| `when request:` | Request handling is the MDQ server's job |
-| `when accept <mimetype>:` | Content negotiation is built into the MDQ handler |
-| `when path <url>:` | URL routing is built into the MDQ handler |
-| `emit <mimetype>` | Response emission is handled by the MDQ handler |
-| `fork and merge` (request-side) | Request-side sub-pipeline; not applicable |
-| `first` (request-side) | In a request context, equivalent to single-entity lookup in the MDQ server |
-
-
-This document analyses every pyFF `examples/*.fd` pipeline and records which ones
-could not be fully translated, and why.  It is intended to track feature gaps and
-inform the goFF roadmap.
-
----
-
-## Coverage summary
-
-| pyFF file | goFF example | Coverage |
-|---|---|---|
-| `uk.fd` | `basic-load-publish.yaml` | ✅ full |
-| `expiration.fd` | `certreport.yaml` | ✅ full |
-| `edugain.fd`, `load.fd` | `multiple-federations.yaml` | ✅ full |
-| `edugain-idps.fd` | `select-idps.yaml` | ⚠️ partial — per-URL cert omitted |
-| `filter-idps.fd` | `select-idps.yaml` | ⚠️ partial — per-URL cert omitted, xslt not shown |
-| `dj.fd`, `edugain-json.fd` | `discojson.yaml` | ✅ full |
-| `edugain-discojson_sp.yaml` | `discojson-roles.yaml` | ✅ full |
-| `edugain-fork.fd` | `fork-idp-sp.yaml` | ✅ full |
-| `renater.fd`, `safire-fed.fd` | `sign-publish.yaml` | ⚠️ partial — per-URL cert omitted |
-| `p11.fd` | `sign-pkcs11.yaml` | ⚠️ partial — per-URL cert omitted |
-| `kirei2.fd` | `xslt-sign-publish.yaml` | ✅ full |
-| `ukmulti.fd` | `finalize-aggregate.yaml` | ✅ full |
-| `test.fd`, `edugain-copy.fd` | `sub-federation-aliases.yaml` | ⚠️ partial — `fork and merge` omitted |
-| `edugain-mdq.fd`, `batch-mdq-loop.fd` | `mdq-server-pipeline.yaml` | ⚠️ partial — `map:`, `log_entity:`, per-entity publish options omitted |
-| `big.fd` | — | ❌ XRD input format not supported |
-| `mdx.fd` | — | ❌ `fork and merge`, collection attributes, XRD via |
-| `eidas.fd` | — | ✅ full — per-source inline options and custom when-branches now fully supported |
-| `edugain-fork-and-filter.fd` | — | ❌ per-source inline options, `check_xml_namespaces` |
-| `ndn.fd` | — | ❌ when update portion coverable; XRD input |
-| `out-edugain.fd` | — | ❌ loading from a pyFF on-disk store (not an alias) |
-| `pp.fd` | — | ❌ `signcerts` action |
-| `new-renater.fd` | — | ⚠️ when update is covered by sign-publish.yaml; URLs contain typos in original |
-
----
-
-## Gap catalogue
-
-### GAP-1 · `fork and merge` not supported
-
-**Affects:** `mdx.fd`, `test.fd`, `edugain-copy.fd`, `edugain-fork-and-filter.fd`
-
-pyFF's `fork and merge` runs a sub-pipeline on a sandboxed copy of the entity set
-and then **merges the result back** into the outer working set.  goFF's `fork` is
-intentionally sandboxed: side effects (attribute enrichment, entity additions) in a
-fork do not propagate to the caller.
-
-The canonical use-case in pyFF is to compute derived attributes on a sub-population
-and add them back — e.g. classify entities into collections, then use those
-collections as further selection criteria:
-
-```yaml
-# pyFF
-- fork and merge:
-   - select: "!//md:EntityDescriptor[md:Extensions[mdrpi:RegistrationInfo[...]]]"
-   - setattr:
-       http://pyff.io/collection: swamid-2.0
-```
-
-In goFF, `reginfo`, `setattr`, and `pubinfo` already enrich the outer working set
-directly (no merge needed), but they only work on the **current** working set, not
-a sub-population selected by an XPath predicate.  There is no mechanism to:
-
-1. select a subset of the current entities,
-2. add attributes to only those entities, and
-3. have those attributes visible to subsequent steps.
-
-**Workaround:** Use `select` + `setattr` in sequence (enriches all currently
-selected entities, not just a predicate-filtered sub-population), then `load` the
-alias back.  This only covers the case where the entire current set should receive
-the attribute.
-
-**Roadmap:** Implement `filter` (already partially supported) as a scoped setattr
-driver, or support a `setattr: selector:` sub-option.
-
----
-
-### GAP-2 · Per-URL inline verification fingerprint not supported
-
-**Affects:** `filter-idps.fd`, `safire-fed.fd`, `p11.fd`, `edugain-idps.fd`
-
-pyFF allows a SHA-1 fingerprint (or SHA-256 colon-separated hex) to be placed
-inline after each source URL in the `load:` list:
-
-```yaml
-# pyFF
-- load:
-   - https://mds.swamid.se/md/swamid-2.0.xml A6:78:5A:37:C9:C9:0C:...
-   - https://metadata.safire.ac.za/safire-edugain.xml BB:89:BA:97:...
-```
-
-goFF's `LoadStep` accepts a single `verify: path/to/cert.pem` for the whole load
-step (XML signature verification against a PEM cert file).  There is no support
-for per-URL fingerprint pinning.
-
-**Workaround:** Use separate `load:` steps with individual `verify:` cert files
-for each source that requires pinning.  This requires splitting each source into
-its own load step.
-
-**Roadmap:** Add a `Source` sub-type to `LoadStep` that accepts per-URL fingerprint
-or cert-file verification alongside the URL, mirroring pyFF's inline format.
-
----
-
-### GAP-3 · Per-source inline options (`as`, `cleanup`, keyword flags)
-
-**Affects:** `edugain-fork-and-filter.fd`, `eidas.fd`, `edugain-copy.fd`, `mdx.fd`
-
-pyFF supports a rich inline syntax on each source entry in the `load:` list:
-
-```yaml
-# pyFF
-- load:
-   - /path/to/swamid-2.0 as kaka cleanup clean
-   - https://qa.md.eidas.swedenconnect.se/... cleanup eidas validate True
-   - examples/links.xrd as links via normalize
-```
-
-This embeds `as` (alias), `cleanup` (pre-processing branch to run), and custom
-keyword flags directly on the source line.  goFF:
-
-- Does not accept per-entry `as` inside a sources list (aliases are created via
-  `select as /name` on a separate step).
-- Does not support `cleanup` as a per-source processing branch reference.
-- Does not evaluate named non-update branches (`when normalize:`, `when eidas:`,
-  etc.) — only `when update`, `when x`, `when true`, `when always` are included.
-
-**Workaround:** Split into multiple `load:` + `select as /alias:` step pairs.
-Per-source cleanup transformations must be inline `xslt:` steps after loading.
-
----
-
-### GAP-4 · XRD format input not supported
-
-**Affects:** `big.fd`, `ndn.fd`, `mdx.fd` (links.xrd, big.xrd, ndn-links.xrd)
-
-pyFF can load XRD/XRDS discovery documents as federation indexes — the XRD file
-lists source URLs with optional verification data, and pyFF resolves and loads each
-referenced feed.
-
-goFF's `load:` only accepts SAML metadata XML (either `EntitiesDescriptor` or
-`EntityDescriptor` root elements).  XRD files are not parsed.
-
-**Workaround:** Inline all source URLs directly in the `load: urls:` list.
-
-**Roadmap:** Add XRD/XRDS parser support in the `load:` step; the main addition
-required is an HTTP fetch + XRD XML parse to expand sources before the normal load
-path.
-
----
-
-### GAP-5 · `map:` — per-entity fork loop
-
-**Affects:** `batch-mdq-loop.fd`
-
-pyFF's `map:` step iterates over each entity in the current working set individually,
-running a sub-pipeline for each one:
+pyFF's `map:` step iterates over each entity in the current working set, running a
+sub-pipeline for each entity individually:
 
 ```yaml
 # pyFF
@@ -438,132 +165,275 @@ running a sub-pipeline for each one:
    - fork:
       - then sign:
       - publish:
-          output: /tmp/mdq/entities
           hash_link: true
           urlencode_filenames: true
+          update_store: false
 ```
 
-This enables per-entity processing pipelines such as signing and writing each
-entity XML to its own file.  goFF has no equivalent; `publish: {dir: ...}` writes
-all entities to a directory but does not support per-entity sub-pipelines.
+This is primarily used for per-entity signing and per-entity file emission in MDQ
+batch loops.  goFF's `publish: {dir:, hash_link: true}` covers the most important
+use-case (writing per-entity files to a directory for static MDQ serving).
 
-**Workaround:** Use `publish: {dir: ..., hash_link: true}` for the common case of
-writing per-entity files.  Per-entity signing is not currently supported; the
-workaround is to sign at the aggregate level.
-
-**Roadmap:** Low priority for the current MDQ server model; `publish: {dir:}` with
-`hash_link` covers the most important use-case.
+Per-entity signing via `map:` is not currently representable in goFF; the
+workaround is to sign at the aggregate level before publishing.
 
 ---
 
 ### GAP-6 · `log_entity:` action not supported
 
-**Affects:** `batch-mdq-loop.fd`
+**Status:** Won't implement (depends on GAP-5 `map:`)
 
-pyFF's `log_entity:` prints diagnostic information about the current entity inside
-a `map:` loop.  Not applicable without `map:` support (GAP-5), and goFF's `info` /
-`dump` actions cover aggregate-level listing.
+Used inside `map:` loops for per-entity diagnostic logging.  goFF's `info` and
+`dump` actions cover aggregate-level listing.  Not applicable without `map:`.
 
 ---
 
-### GAP-7 · `check_xml_namespaces` action not supported
+### GAP-7 · `check_xml_namespaces` action → ✅ CLOSED (no-op)
 
-**Affects:** `edugain-fork-and-filter.fd`, `eidas.fd`, `edugain-copy.fd`
+**Implemented in:** commit `eda16f9`
 
-pyFF's `check_xml_namespaces` validates that XML namespace declarations in loaded
-metadata are well-formed and consistent.  goFF does not have an equivalent action;
-namespace validation happens implicitly during XML parse at load time.
+`check_xml_namespaces` is accepted as a valid pipeline action and treated as a
+no-op.  goFF validates XML namespace correctness implicitly during load (the XML
+parser rejects malformed namespace declarations).
 
 ---
 
 ### GAP-8 · `signcerts` action not supported
 
+**Status:** Intentionally unsupported
+
 **Affects:** `pp.fd`
 
 pyFF's `signcerts` adds X.509 certificate signing infrastructure to embedded
-certificates in entity XML (used for certificate renewal workflows).  It is
-explicitly rejected by goFF's parser as unsupported.
+certificates in entity XML.  This is a certificate renewal workflow tool with no
+equivalent in goFF.  The action is accepted by the parser but a no-op at runtime
+(same as `emit` and `merge`).
 
 ---
 
-### GAP-9 · pyFF on-disk store as cross-pipeline source
+### GAP-9 · pyFF on-disk store as cross-pipeline source → ✅ CLOSED via directory loading
 
-**Affects:** `out-edugain.fd`
+**Implemented in:** commit `eda16f9`
 
-`out-edugain.fd` loads entities from `/tmp/edugain` — a pyFF store directory
-written by a prior `store: {directory: /tmp/edugain}` step in `edugain-idps.fd`.
-This relies on pyFF's persistent content-addressable store format (one XML file per
-entity, named by SHA-256).
+`load:` supports loading from directories: when a path points to a directory, goFF
+scans and loads every `*.xml` file within it.  This enables round-tripping through
+`publish: {dir:}`:
 
-goFF does not have a pyFF-compatible store directory; `publish: {dir:}` writes
-`sha256(entityID).xml` files in a similar layout, but there is no `load:` path that
-reads back from such a directory.  In-pipeline aliases (`select as /name`) only
-persist for the duration of one pipeline run.
+```yaml
+# Pipeline A
+- publish:
+    dir: /tmp/edugain
 
-**Workaround:** Combine both pipelines into one, using `select as /alias:` to
-pass data between what pyFF split into separate processes.
+# Pipeline B (run later)
+- load:
+  - /tmp/edugain
+```
+
+See also GAP-13 for the `store:` action which pyFF uses to write such directories.
 
 ---
 
-### GAP-10 · `publish:` options `urlencode_filenames`, `raw`, `ext`
+### GAP-10 · `publish:` options `urlencode_filenames`, `raw`, `ext` → ✅ PARTIALLY CLOSED
+
+**Implemented in:** commit `eda16f9`
+
+- **`urlencode_filenames: true`** — ✅ implemented; writes MDQ-compatible
+  percent-encoded filenames (`%7Bsha256%7DHEXHASH`).
+- **`ext: <suffix>`** — ✅ implemented; overrides the default `.xml` extension.
+- **`raw: true`** — accepted but currently a no-op; `publish: {dir:}` always
+  writes raw entity XML (one `EntityDescriptor` per file).
+- **`update_store: false`** — accepted (unknown keys are silently ignored by the
+  Go YAML library); no pyFF store concept in goFF so has no effect regardless.
+
+---
+
+### GAP-11 · `when <custom-name>:` pre-processing branches → ✅ CLOSED
+
+**Implemented in:** commit `8468ad9`
+
+`when <name>:` blocks are preserved as `WhenStep` nodes in the pipeline AST.  At
+runtime, a `when name:` block fires iff `name` is present in the pipeline's active
+state labels, matching pyFF's `req.state.get(condition)` semantics exactly.
+
+Default batch execution sets `states = {update, x, true, always}` so all standard
+batch-mode guards fire.  Custom named branches (`when normalize:`, `when edugain:`,
+etc.) do not fire unless that label is present in `ExecuteOptions.States`, which
+only happens during a `via`-invoked re-run (see GAP-12).
+
+---
+
+### GAP-12 · `load: via:` branch invocation → ✅ CLOSED
+
+**Implemented in:** commit `8468ad9`
+
+`load <url> via foo` re-runs the **full root pipeline** with
+`states = {foo: true}` and the freshly-loaded entities as the initial set.  Any
+`when foo:` blocks fire; `when update:` blocks do not.
+
+Pipelines should include `break` at the end of `when <name>:` bodies to stop
+execution before the `when update:` load step is reached, preventing recursive
+re-fetching — the same discipline pyFF requires.
+
+The canonical pattern from `edugain-copy.fd` and `mdx.fd` works correctly:
+
+```yaml
+- when normalize:
+    - xslt: tidy.xsl
+    - break
+- when update:
+    - load:
+      - https://example.org/fed.xml via normalize
+    - select
+    - publish: ...
+```
+
+---
+
+### GAP-13 · `store:` action not recognized by parser → ✅ CLOSED
+
+**Implemented in:** this release
+
+**Affects:** `big.fd`, `edugain.fd`, `edugain-fork.fd`, `edugain-idps.fd`,
+`kirei2.fd`, `load.fd`, `safire-fed.fd`
+
+pyFF's `store:` step writes entity XML to a content-addressable on-disk directory
+AND registers those entities as a named source in pyFF's in-memory store.  It
+appears in many pipelines as a checkpoint step between loading/processing and final
+publishing.
+
+```yaml
+# pyFF
+- store:
+    directory: /tmp/edugain
+# or scalar form
+- store:
+   - directory /tmp/big
+```
+
+goFF now accepts `store:` and executes it as `publish: {dir: <path>}`.  Three
+pyFF forms are all supported:
+
+```yaml
+# mapping form (most common)
+- store:
+    directory: /tmp/edugain
+
+# scalar form (old pyFF)
+- store:
+   - directory /tmp/edugain
+
+# bare path form
+- store: /tmp/edugain
+```
+
+The in-memory store concept from pyFF is not needed: goFF uses in-pipeline aliases
+(`select as /name:`) for same-run cross-step references and directory loading
+(GAP-9 closed) for cross-run persistence.
+
+---
+
+### GAP-14 · `then <label>:` step not recognised by parser → ✅ CLOSED
+
+**Implemented in:** this release
 
 **Affects:** `batch-mdq-loop.fd`
 
-pyFF's `publish:` step supports additional options not present in goFF:
-- `urlencode_filenames: true` — percent-encode entity IDs when used as filenames.
-- `raw: true` — write the JSON body without XML wrapping when used after discojson.
-- `ext: .json` — override the output file extension.
+pyFF's `then <label>:` step, used within `fork:` bodies, re-invokes the root
+pipeline with `states = {label: true}` and the current entity set.  It is
+semantically equivalent to a `via` invocation but as a standalone pipeline step
+rather than a per-source load option.
 
-These were used in the MDQ batch loop to write per-entity discovery JSON files
-alongside XML files.  goFF's `PublishStep` struct has no equivalent fields.
+```yaml
+# pyFF  — in batch-mdq-loop.fd
+- fork:
+   - then sign:    # re-run root pipeline with states={sign:true}
+   - break
+```
+
+goFF now accepts `then <label>:` as a step and implements it as a root-pipeline
+re-run with `states = {label: true}` and the current entity set as input — the
+in-pipeline equivalent of `load … via <label>`.  The canonical pattern from
+`batch-mdq-loop.fd` works correctly:
+
+```yaml
+- when sign:
+    - drop_xsi_type
+    - finalize: …
+    - sign: …
+- when batch:
+    - load: […]
+    - select:
+    - fork:
+       - then sign:    # re-runs root pipeline with {sign:true}
+       - publish: …
+       - break
+```
 
 ---
 
-### GAP-11 · `when <custom-name>:` pre-processing branches
+### GAP-15 · `when batch:` not in default execution states → ✅ CLOSED
 
-**Affects:** `edugain-copy.fd`, `eidas.fd`, `test.fd`, `mdx.fd`
-**Status:** ✅ Closed (correctly)
+**Implemented in:** this release
 
-`when <name>:` blocks are preserved as `WhenStep` nodes in the pipeline AST.
-At runtime, `when name:` fires iff `name` is present in the active state labels,
-matching pyFF's `req.state.get(condition)` semantics exactly.  All blocks —
-`when normalize:`, `when edugain:`, `when update:`, `when request:`, etc. — are
-parsed and kept; only the runtime state determines which fire.
+**Affects:** `batch-mdq-loop.fd`
 
-Request-side bodies (`when request:`, `when accept:`) may contain `emit`/`merge`
-steps; these are silently skipped in batch execution (they are no-ops).
+`batch-mdq-loop.fd` uses `when batch:` as its main conditional guard for all batch
+processing.  In pyFF, `batch` is a label that operators pass explicitly when
+invoking the pipeline in batch mode.
+
+goFF's default batch execution states are `{update, x, true, always}`.  `batch`
+is not included, so a `when batch:` block in a migrated pipeline will be silently
+skipped.
+
+`"batch": true` is now included in the default batch-mode states alongside
+`update`, `x`, `true`, and `always`.  Pipelines using `when batch:` as their
+main guard (e.g. `batch-mdq-loop.fd`) now work without modification.
 
 ---
 
-### GAP-12 · `load: via:` branch invocation
+### GAP-16 · `drop_xsi_type:` step not recognised by parser → ✅ CLOSED (no-op)
 
-**Affects:** `mdx.fd`, `edugain-copy.fd`
-**Status:** ✅ Closed (correctly)
+**Implemented in:** this release
 
-The full pyFF semantics are implemented.  `load <url> via foo` re-runs the
-**root pipeline** from the top with `states = {foo: true}` and the freshly-loaded
-entities as the initial entity set.  `when foo:` blocks fire naturally; `when
-update:` blocks do not.  An unknown `via` label is not an error — the pipeline
-simply runs with no matching guards, passing entities through unchanged.
+**Affects:** `batch-mdq-loop.fd`
 
-The canonical pyFF pattern — `when normalize: ... break` followed by `when
-update: load ... via normalize` — works correctly: `break` inside the normalize
-body propagates outward (matching pyFF's `req.done` flag) and stops the pipeline
-before the `when update:` load step is reached.
+pyFF's `drop_xsi_type` pipe removes `xsi:type` attributes from entity XML elements.
+It is used as a pre-processing cleanup step before signing in `when sign:` blocks.
+
+```yaml
+# pyFF
+- when sign:
+   - drop_xsi_type:
+   - finalize: ...
+   - sign: ...
+```
+
+`drop_xsi_type` is now accepted by the parser as a no-op, consistent with
+how `check_xml_namespaces` (GAP-7) was handled.  goFF's XML parser does not
+introduce `xsi:type` attributes, so SAML metadata processed by goFF does not
+need this cleanup step.  `log_entity` (per-entity diagnostic logging inside
+`map:` loops) is also accepted as a no-op for the same reason.
 
 ---
 
 ## Not applicable to goFF (by design)
 
-The following pyFF constructs appear in nearly all `.fd` files but are
-**intentionally outside goFF's scope** because goFF handles request routing via its
-built-in MDQ HTTP server, not the pipeline:
+The following pyFF constructs appear in most `.fd` files but are **intentionally
+outside goFF's scope** because goFF handles request routing via its built-in MDQ
+HTTP server, not the pipeline:
 
 | pyFF construct | Reason omitted |
 |---|---|
-| `when request:` | Request handling is the MDQ server's job |
+| `when request:` | Request handling is the MDQ server's responsibility |
 | `when accept <mimetype>:` | Content negotiation is built into the MDQ handler |
 | `when path <url>:` | URL routing is built into the MDQ handler |
 | `emit <mimetype>` | Response emission is handled by the MDQ handler |
-| `fork and merge` (request-side) | Request-side sub-pipeline; not applicable |
-| `first` (request-side) | In a request context, equivalent to single-entity lookup in the MDQ server |
+| `fork and merge` (request-side) | Request-side sub-pipeline dispatch; not applicable |
+| `first` (request-side) | Single-entity lookup in MDQ context; handled by the server |
+| `pipe:` (request-side) | Response dispatch sub-pipeline; handled by the server |
+
+All of the above are **parsed without error** by goFF (they are in the accepted
+action list or their `when` bodies are), but their bodies are silently skipped
+during batch execution.  This means pyFF pipeline files that contain both a batch
+section (`when update:`) and a request section (`when request:`) can be loaded and
+executed in goFF without any YAML changes — only the batch portion fires.

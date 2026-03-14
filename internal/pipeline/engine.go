@@ -56,6 +56,7 @@ func Execute(p File, outputDir string, opts ...ExecuteOptions) (Result, error) {
 		// convention where any of these labels indicates a batch/update run.
 		states = map[string]bool{
 			"update": true,
+			"batch":  true, // pyFF uses 'batch' as a synonym for 'update' in batch-mode pipelines
 			"x":      true,
 			"true":   true,
 			"always": true,
@@ -268,6 +269,70 @@ func executeSteps(
 			publishFirst = false
 		case "emit", "signcerts", "merge":
 			// Request-side / no-op actions: silently ignored in batch execution.
+		case "drop_xsi_type", "log_entity":
+			// pyFF XML cleanup / diagnostic no-ops.
+		case "map":
+			// pyFF per-entity iteration loop (GAP-5): run the sub-pipeline as a
+			// regular fork — side effects (e.g. publish) execute but the outer
+			// entity set is unchanged.  Full per-entity semantics require GAP-5.
+			_, err := executeSteps(
+				step.Fork.Pipeline, outputDir, baseDir,
+				cloneSourceMap(sourceMap),
+				cloneSourceAttrsMap(sourceAttrs),
+				cloneSourceXMLMap(sourceXML),
+				append([]string(nil), current...),
+				cloneAttrs(currentAttrs),
+				cloneEntityXML(currentXML),
+				finalizeCfg, signCfg, verifyCfg,
+				rootPipeline, states,
+				opts,
+			)
+			if err != nil && err != errBreak {
+				return Result{}, fmt.Errorf("step %d map: %w", i, err)
+			}
+		case "store":
+			// pyFF store: directory: — equivalent to publish:{dir:} (GAP-13).
+			if step.Store.Directory != "" {
+				pub := PublishStep{Dir: step.Store.Directory}
+				if err := runPublish(pub, outputDir, current, currentXML, finalizeCfg, signCfg, verifyCfg, publishFirst); err != nil {
+					return Result{}, fmt.Errorf("step %d store: %w", i, err)
+				}
+			}
+		case "then":
+			// pyFF `then <label>:` — re-run the root pipeline from the top with
+			// states={label:true} and the current entity set as input (GAP-14).
+			// This is the in-pipeline equivalent of load's `via` option.
+			label := step.Then
+			if label != "" {
+				thenStates := map[string]bool{label: true}
+				sub, err := executeSteps(
+					rootPipeline, outputDir, baseDir,
+					cloneSourceMap(sourceMap),
+					cloneSourceAttrsMap(sourceAttrs),
+					cloneSourceXMLMap(sourceXML),
+					append([]string(nil), current...),
+					cloneAttrs(currentAttrs),
+					cloneEntityXML(currentXML),
+					finalizeCfg, signCfg, verifyCfg,
+					rootPipeline, thenStates, opts,
+				)
+				if err != nil && err != errBreak {
+					return Result{}, fmt.Errorf("step %d then %q: %w", i, label, err)
+				}
+				current = sub.Entities
+				currentAttrs = sub.Attrs
+				if currentAttrs == nil {
+					currentAttrs = make(map[string]EntityAttributes)
+				}
+				currentXML = sub.EntityXML
+				if currentXML == nil {
+					currentXML = make(map[string]string)
+				}
+				finalizeCfg = sub.Finalize
+				signCfg = sub.Sign
+				verifyCfg = sub.Verify
+			}
+			publishFirst = false
 		case "fork", "pipe", "parsecopy":
 			// Run sub-pipeline on a snapshot of current state; outer state is unchanged.
 			_, err := executeSteps(

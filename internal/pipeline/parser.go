@@ -147,6 +147,12 @@ func (s *Step) UnmarshalYAML(node *yaml.Node) error {
 				s.XSLT.Stylesheet = strings.Join(parts[1:], " ")
 			}
 		}
+		if s.Action == "then" {
+			parts := strings.Fields(rawAction)
+			if len(parts) >= 2 {
+				s.Then = strings.Join(parts[1:], " ")
+			}
+		}
 		return nil
 	case yaml.MappingNode:
 		if len(node.Content) != 2 {
@@ -243,6 +249,25 @@ func (s *Step) UnmarshalYAML(node *yaml.Node) error {
 				return fmt.Errorf("parse fork sub-pipeline: %w", err)
 			}
 			s.Fork.Pipeline = subSteps
+		case "store":
+			if err := valueNode.Decode(&s.Store); err != nil {
+				return err
+			}
+		case "then":
+			// `then <label>:` — label is the second word of the raw action key.
+			parts := strings.Fields(actionNode.Value)
+			if len(parts) >= 2 {
+				s.Then = strings.Join(parts[1:], " ")
+			}
+		case "map":
+			// per-entity loop: parse sub-pipeline but execute as a no-op (see GAP-5).
+			if valueNode.Kind == yaml.SequenceNode {
+				subSteps, err := parsePipelineSequence(valueNode)
+				if err != nil {
+					return fmt.Errorf("parse map sub-pipeline: %w", err)
+				}
+				s.Fork.Pipeline = subSteps
+			}
 		default:
 			// unknown action payload ignored here; validation handles unsupported actions
 		}
@@ -385,7 +410,13 @@ func validateAction(action string) error {
 		// Request-side / no-op actions: accepted in pipeline YAML (e.g. inside
 		// `when request:` or `when accept:` bodies) but silently ignored at
 		// runtime in batch/update execution.
-		"emit", "signcerts", "merge":
+		"emit", "signcerts", "merge",
+		// pyFF compatibility aliases / no-ops:
+		"store",          // alias for publish:{dir:} — implements pyFF's store: directory: (GAP-13)
+		"then",           // root pipeline re-run with {label:true} state (GAP-14)
+		"drop_xsi_type",  // XML cleanup no-op (GAP-16)
+		"log_entity",     // per-entity diagnostic no-op inside map: loops (GAP-6)
+		"map":            // per-entity loop — no-op; publish:{dir:} covers the common case (GAP-5)
 		return nil
 	default:
 		return fmt.Errorf("unknown pipeline action %q", action)
