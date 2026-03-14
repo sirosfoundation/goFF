@@ -412,11 +412,11 @@ func validateAction(action string) error {
 		// runtime in batch/update execution.
 		"emit", "signcerts", "merge",
 		// pyFF compatibility aliases / no-ops:
-		"store",          // alias for publish:{dir:} — implements pyFF's store: directory: (GAP-13)
-		"then",           // root pipeline re-run with {label:true} state (GAP-14)
-		"drop_xsi_type",  // XML cleanup no-op (GAP-16)
-		"log_entity",     // per-entity diagnostic no-op inside map: loops (GAP-6)
-		"map":            // per-entity loop — no-op; publish:{dir:} covers the common case (GAP-5)
+		"store",         // alias for publish:{dir:} — implements pyFF's store: directory: (GAP-13)
+		"then",          // root pipeline re-run with {label:true} state (GAP-14)
+		"drop_xsi_type", // XML cleanup no-op (GAP-16)
+		"log_entity",    // per-entity diagnostic no-op inside map: loops (GAP-6)
+		"map":           // per-entity loop — no-op; publish:{dir:} covers the common case (GAP-5)
 		return nil
 	default:
 		return fmt.Errorf("unknown pipeline action %q", action)

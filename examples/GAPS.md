@@ -43,7 +43,7 @@ built-in MDQ server, not the pipeline.  See the final section for details.
 | `ndn.fd` | — | ✅ full — XRD input supported; `when update:` + `via` semantics correct |
 | `out-edugain.fd` | — | ✅ full — directory-load from prior `publish: dir:` output |
 | `edugain-mdq.fd` | `mdq-server-pipeline.yaml` | ✅ full — request pipeline body is no-op in batch; batch portion works |
-| `batch-mdq-loop.fd` | `mdq-server-pipeline.yaml` | ⚠️ partial — `map:` / `log_entity:` omitted (GAP-5/6); all other constructs (`when batch:`, `then <label>:`, `drop_xsi_type:`, `store:`) now supported |
+| `batch-mdq-loop.fd` | `mdq-server-pipeline.yaml` | ✅ full — `map:`, `when batch:`, `then <label>:`, `drop_xsi_type:`, `store:` all supported |
 | `new-renater.fd` | — | ⚠️ partial — batch portion covered by `sign-publish.yaml`; source URLs contain typos in original |
 | `pp.fd` | — | ❌ `signcerts` intentionally unsupported (GAP-8) |
 
@@ -151,40 +151,52 @@ each one as SAML metadata.
 
 ---
 
-### GAP-5 · `map:` — per-entity fork loop
+### GAP-5 · `map:` — per-entity fork loop → ✅ CLOSED
 
-**Status:** Won't implement
+**Implemented in:** this release
 
-pyFF's `map:` step iterates over each entity in the current working set, running a
-sub-pipeline for each entity individually:
+pyFF's `map:` step iterates over each entity in the current working set, running
+the sub-pipeline once per entity with a single-entity snapshot as input.  Side
+effects (e.g. `publish:`, `fork:`, `then:`) execute per-entity; the outer entity
+set is unchanged after all iterations complete.
+
+This enables the static MDQ publishing pattern from `batch-mdq-loop.fd`:
 
 ```yaml
-# pyFF
-- map:
-   - log_entity:
-   - fork:
-      - then sign:
-      - publish:
-          hash_link: true
-          urlencode_filenames: true
-          update_store: false
+- when sign:
+    - drop_xsi_type
+    - finalize: ...
+    - sign: ...
+- when batch:
+    - load: [...]
+    - select:
+    - map:
+        - fork:
+            - then sign:
+            - publish:
+                dir: /tmp/mdq/entities
+                hash_link: true
+                urlencode_filenames: true
+            - break
+        - fork:
+            - discojson
+            - publish:
+                dir: /tmp/mdq/entities
+                hash_link: true
+                raw: true
+                ext: .json
+                urlencode_filenames: true
 ```
-
-This is primarily used for per-entity signing and per-entity file emission in MDQ
-batch loops.  goFF's `publish: {dir:, hash_link: true}` covers the most important
-use-case (writing per-entity files to a directory for static MDQ serving).
-
-Per-entity signing via `map:` is not currently representable in goFF; the
-workaround is to sign at the aggregate level before publishing.
 
 ---
 
-### GAP-6 · `log_entity:` action not supported
+### GAP-6 · `log_entity:` action → ✅ CLOSED (no-op)
 
-**Status:** Won't implement (depends on GAP-5 `map:`)
+**Implemented in:** this release
 
-Used inside `map:` loops for per-entity diagnostic logging.  goFF's `info` and
-`dump` actions cover aggregate-level listing.  Not applicable without `map:`.
+`log_entity:` is accepted as a no-op.  Inside a `map:` loop (now functional),
+each iteration operates on a single entity; goFF's `info` and `dump` actions
+can be used instead for aggregate-level listing.
 
 ---
 

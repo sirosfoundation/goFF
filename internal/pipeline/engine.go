@@ -272,23 +272,34 @@ func executeSteps(
 		case "drop_xsi_type", "log_entity":
 			// pyFF XML cleanup / diagnostic no-ops.
 		case "map":
-			// pyFF per-entity iteration loop (GAP-5): run the sub-pipeline as a
-			// regular fork — side effects (e.g. publish) execute but the outer
-			// entity set is unchanged.  Full per-entity semantics require GAP-5.
-			_, err := executeSteps(
-				step.Fork.Pipeline, outputDir, baseDir,
-				cloneSourceMap(sourceMap),
-				cloneSourceAttrsMap(sourceAttrs),
-				cloneSourceXMLMap(sourceXML),
-				append([]string(nil), current...),
-				cloneAttrs(currentAttrs),
-				cloneEntityXML(currentXML),
-				finalizeCfg, signCfg, verifyCfg,
-				rootPipeline, states,
-				opts,
-			)
-			if err != nil && err != errBreak {
-				return Result{}, fmt.Errorf("step %d map: %w", i, err)
+			// pyFF per-entity iteration loop: run the sub-pipeline once per entity
+			// in the current working set, each time with a single-entity snapshot.
+			// Side effects (e.g. publish, sign) execute per-entity; the outer
+			// entity set is unchanged after all iterations complete.
+			for _, entityID := range current {
+				entityAttrs := make(map[string]EntityAttributes)
+				if a, ok := currentAttrs[entityID]; ok {
+					entityAttrs[entityID] = a
+				}
+				entityXML := make(map[string]string)
+				if x, ok := currentXML[entityID]; ok {
+					entityXML[entityID] = x
+				}
+				_, err := executeSteps(
+					step.Fork.Pipeline, outputDir, baseDir,
+					cloneSourceMap(sourceMap),
+					cloneSourceAttrsMap(sourceAttrs),
+					cloneSourceXMLMap(sourceXML),
+					[]string{entityID},
+					entityAttrs,
+					entityXML,
+					finalizeCfg, signCfg, verifyCfg,
+					rootPipeline, states,
+					opts,
+				)
+				if err != nil && err != errBreak {
+					return Result{}, fmt.Errorf("step %d map entity %q: %w", i, entityID, err)
+				}
 			}
 		case "store":
 			// pyFF store: directory: — equivalent to publish:{dir:} (GAP-13).
