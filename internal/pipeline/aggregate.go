@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"bytes"
+	"encoding/xml"
 	"fmt"
 	"strings"
 	"time"
@@ -80,6 +81,17 @@ func ParseCacheDurationSeconds(cd string) (int, bool) {
 	return secs, true
 }
 
+// writeXMLAttr writes ` name="escaped-value"` to buf using proper XML attribute
+// character escaping so that values containing <, >, &, or " do not produce
+// malformed XML output.
+func writeXMLAttr(buf *bytes.Buffer, name, value string) {
+	buf.WriteByte(' ')
+	buf.WriteString(name)
+	buf.WriteString(`="`)
+	_ = xml.EscapeText(buf, []byte(value))
+	buf.WriteByte('"')
+}
+
 // BuildEntitiesXML renders a complete md:EntitiesDescriptor document embedding
 // the full XML body of each entity ID in ids.  Missing or empty bodies fall
 // back to a minimal stub EntityDescriptor.  cfg attributes are written on the
@@ -91,20 +103,22 @@ func BuildEntitiesXML(ids []string, bodies map[string]string, cfg AggregateConfi
 	buf.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
 	buf.WriteString(`<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"`)
 	if cfg.Name != "" {
-		buf.WriteString(fmt.Sprintf(` Name=%q`, cfg.Name))
+		writeXMLAttr(&buf, "Name", cfg.Name)
 	}
 	if cfg.CacheDuration != "" {
-		buf.WriteString(fmt.Sprintf(` cacheDuration=%q`, cfg.CacheDuration))
+		writeXMLAttr(&buf, "cacheDuration", cfg.CacheDuration)
 	}
 	if validUntil != "" {
-		buf.WriteString(fmt.Sprintf(` validUntil=%q`, validUntil))
+		writeXMLAttr(&buf, "validUntil", validUntil)
 	}
 	buf.WriteString(">\n")
 
 	for _, id := range ids {
 		body, ok := bodies[id]
 		if !ok || strings.TrimSpace(body) == "" {
-			buf.WriteString(fmt.Sprintf("  <md:EntityDescriptor entityID=%q></md:EntityDescriptor>\n", id))
+			buf.WriteString(`  <md:EntityDescriptor entityID="`)
+			_ = xml.EscapeText(&buf, []byte(id))
+			buf.WriteString(`"></md:EntityDescriptor>` + "\n")
 			continue
 		}
 		s := strings.TrimSpace(body)

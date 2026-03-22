@@ -12,9 +12,9 @@ Build `goFF` as a Go-based reimplementation of pyFF that can run pyFF-style pipe
 - Follow packaging, build, test, and ADR conventions from `go-trust` and `go-spocp`.
 - Use XML security libraries aligned with `vc` and respect workspace `go.work` replace directives.
 
-## Current Repository Snapshot (2026-03-11)
-`goFF` is past bootstrap and has a working implementation across batch, pipeline execution,
-and MDQ serving.
+## Current Repository Snapshot (2026-03-21)
+`goFF` is production-ready for update-mode pipelines and MDQ serving. The full
+pyFF update-mode pipeline action surface is implemented and fixture-proven.
 
 Implemented code layout:
 - `cmd/goff/main.go`: CLI entrypoint with `batch`, `server`, and `version` commands
@@ -37,12 +37,12 @@ Validation status:
 | Phase | Status | Notes |
 | --- | --- | --- |
 | 0 Foundation and Guardrails | done | Module structure, docs, ADRs, Make/Docker/lint scaffolding are in place |
-| 1 Pipeline Compatibility Core | partial | Core parser/executor and initial action subset implemented; parity still incomplete for advanced pyFF actions |
-| 2 Metadata Processing Engine | partial | File/URL loading and deterministic behavior implemented; policy boundaries and broader normalization work remain |
-| 3 XML Security and Signing/Verification | partial | Sign/verify exists (including PKCS#11 fixture path), interoperability breadth needs expansion |
-| 4 Batch Mode | partial | `goff batch` is implemented; diagnostics and stricter exit-code contract should be hardened |
-| 5 MDQ Server Mode | partial | `goff server` with refresh loop and basic endpoints exists; operational hardening remains |
-| 6 Hardening and Performance | planned | Benchmarks, fuzzing, and race/perf gates not fully institutionalized yet |
+| 1 Pipeline Compatibility Core | done | All pyFF update-mode pipeline actions implemented; full fixture coverage; pyFF source format compatibility achieved |
+| 2 Metadata Processing Engine | done | File/URL loading (concurrent), XRD/XRDS expansion, XML fingerprints, verify hash shorthand, HTTP proxy, integer timeout, SSRF protection |
+| 3 XML Security and Signing/Verification | done | Sign/verify round-trips; PKCS#11 HSM signing; `drop_xsi_type` pre-signing cleanup; deterministic signed output |
+| 4 Batch Mode | done | `goff batch` with `GOFF_PIPELINE`/`GOFF_OUTPUT` env vars; verbose progress; strict exit-code contract |
+| 5 MDQ Server Mode | done | `goff server` with refresh loop, health/readiness, metrics, TLS, configurable entity renderer, `GOFF_*` env vars for all flags |
+| 6 Hardening and Performance | in progress | Benchmarks and fuzz targets in place; race detector in CI; further performance tuning and security audits ongoing |
 
 ## Delivery Phases
 
@@ -203,6 +203,22 @@ Sprint C progress note:
 - `sign`/`verify` publish semantics now fail fast when configured against non-XML publish outputs, preventing silent no-op behavior on text artifacts.
 - `pubinfo` structured match parity now includes `values` list projection into `value:<value>` query tokens, validated by batch fixtures.
 - goFF-specific `sources:` map and `pipeline:` wrapper key removed entirely; the top-level YAML document is now the pipeline itself — a bare sequence of steps matching the native pyFF format. `LoadStep.Files`/`URLs`/`Entities` replace the named-source indirection. In-pipeline aliases (`select as /name:`) allow cross-step references via `load: files: [/name]`. All 40+ fixture YAML files and all test files updated; `ParseFile` now rejects non-sequence top-level YAML with an explicit error.
+
+Sprint D progress note:
+- Inline URL fingerprint (`https://url|sha256:hexhash`) now supported on all `load: urls:` entries — goFF strips the suffix, fetches the clean URL, and verifies the raw response bytes using `parseURLFingerprint` + `tryVerifyBodyHash`.
+- `verify:` hash shorthand (`sha256:hex`, `sha1:hex`, `md5:hex`) supported as an alternative to PEM cert file path in `load:` source verification.
+- `timeout:` bare integer seconds accepted as pyFF pyFF compat alias (e.g. `timeout: 60` → 60s).
+- HTTP proxy support added via `http.ProxyFromEnvironment` in all fetch operations.
+- `publish: raw: true` implemented for single-file publish: bypasses `finalize`/`sign` and writes raw in-memory aggregate XML.
+- `load: from: <alias>` registers the loaded entity set as a named source alias immediately after loading.
+- `GOFF_PIPELINE` and `GOFF_OUTPUT` env vars added to the `batch` subcommand (previously only the `server` subcommand had env var coverage).
+- `map:` per-entity fork loop implemented; enables static MDQ per-entity publishing pattern from `batch-mdq-loop.fd`.
+- `store:` accepted as alias for `publish: {dir: <path>}`.
+- `then <label>:` step implemented as root-pipeline re-run with `states = {label: true}`.
+- `drop_xsi_type:` implemented (removes `xsi:type` attrs from entity XML before signing).
+- `log_entity:`, `check_xml_namespaces:` accepted as no-ops.
+- `merge:` accepted with runtime warning instead of fatal pipeline error.
+- `signcerts:`, `emit:` accepted with warning/no-op.
 
 ## Near-Term Acceptance Criteria
 - New parity fixtures demonstrate behavior coverage for every `partial` action that has an implemented path.

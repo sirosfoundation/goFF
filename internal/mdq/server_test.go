@@ -442,3 +442,118 @@ func TestEntityLookupXMLETagMismatchReturnsFullBody(t *testing.T) {
 	}
 }
 
+func TestEntityLookupJSONWithIndexedDiscoRenderer(t *testing.T) {
+	id := "https://idp.example.org/idp"
+	entries := []pipeline.DiscoEntry{
+		{EntityID: id, Type: []string{"idp"}},
+	}
+	h := NewHandler(
+		repo.New([]string{id}),
+		WithEntityRenderer(NewIndexedDiscoRenderer(entries)),
+	)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/entities/"+url.PathEscape(id)+".json", nil)
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if rr.Header().Get("Content-Type") != "application/disco+json" {
+		t.Fatalf("expected application/disco+json, got %q", rr.Header().Get("Content-Type"))
+	}
+	var e pipeline.DiscoEntry
+	if err := json.Unmarshal(rr.Body.Bytes(), &e); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if e.EntityID != id {
+		t.Fatalf("unexpected entityID: %q", e.EntityID)
+	}
+	if len(e.Type) == 0 || e.Type[0] != "idp" {
+		t.Fatalf("expected type=[idp], got %v", e.Type)
+	}
+}
+
+func TestEntityLookupJSONWithIndexedDiscoRendererMiss(t *testing.T) {
+	// Entity in repo but not in disco index: should fall back to {"entityID":"..."}.
+	id := "https://sp.example.org/sp"
+	h := NewHandler(
+		repo.New([]string{id}),
+		WithEntityRenderer(NewIndexedDiscoRenderer(nil)),
+	)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/entities/"+url.PathEscape(id)+".json", nil)
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	// Content-Type is disco+json even on fallback; caller decides how to handle.
+	if rr.Body.Len() == 0 {
+		t.Fatal("expected non-empty body")
+	}
+}
+
+func TestEntityLookupJSONWithFuncRenderer(t *testing.T) {
+	id := "https://idp.example.org/idp"
+	xmlBody := `<EntityDescriptor/>`
+	called := false
+	r := NewFuncRenderer("application/vnd.custom+json", func(entityID, body string) ([]byte, error) {
+		called = true
+		return json.Marshal(map[string]string{"id": entityID, "xml": body})
+	})
+	h := NewHandler(
+		repo.New([]string{id}, map[string]string{id: xmlBody}),
+		WithEntityRenderer(r),
+	)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/entities/"+url.PathEscape(id)+".json", nil)
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if !called {
+		t.Fatal("FuncRenderer was not called")
+	}
+	if rr.Header().Get("Content-Type") != "application/vnd.custom+json" {
+		t.Fatalf("unexpected Content-Type: %q", rr.Header().Get("Content-Type"))
+	}
+	var m map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if m["xml"] != xmlBody {
+		t.Fatalf("xmlBody not forwarded: %q", m["xml"])
+	}
+}
+
+func TestEntityLookupJSONWithDynamicRendererFunc(t *testing.T) {
+	id := "https://idp.example.org/idp"
+	var current EntityRenderer = MinimalRenderer{}
+	h := NewHandler(
+		repo.New([]string{id}),
+		WithEntityRendererFunc(func() EntityRenderer { return current }),
+	)
+
+	// First request: MinimalRenderer → {"entityID":"..."}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/entities/"+url.PathEscape(id)+".json", nil))
+	if !strings.Contains(rr.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("expected application/json from MinimalRenderer, got %q", rr.Header().Get("Content-Type"))
+	}
+
+	// Hot-swap to IndexedDiscoRenderer with a pre-built disco entry.
+	current = NewIndexedDiscoRenderer([]pipeline.DiscoEntry{{EntityID: id, Type: []string{"idp"}}})
+
+	// Second request: should now use IndexedDiscoRenderer → application/disco+json.
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/entities/"+url.PathEscape(id)+".json", nil))
+	if rr.Header().Get("Content-Type") != "application/disco+json" {
+		t.Fatalf("expected application/disco+json after hot-swap, got %q", rr.Header().Get("Content-Type"))
+	}
+}
+
+

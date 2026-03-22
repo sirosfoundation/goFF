@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -60,6 +61,16 @@ func parsePipelineSequence(seq *yaml.Node) ([]Step, error) {
 	return out, nil
 }
 
+// isRequestScopedCondition returns true for when-conditions that are only
+// meaningful in pyFF's per-HTTP-request execution model.
+func isRequestScopedCondition(cond string) bool {
+	switch cond {
+	case "request", "accept", "path":
+		return true
+	}
+	return false
+}
+
 // expandStepNode turns a single YAML node into one or more Steps.
 // when-nodes are preserved as a Step{Action:"when", When:WhenStep{...}};
 // all other nodes are decoded normally.
@@ -76,6 +87,15 @@ func expandStepNode(node *yaml.Node) ([]Step, error) {
 		bodySteps, err := parsePipelineSequence(body)
 		if err != nil {
 			return nil, fmt.Errorf("when %q body: %w", cond, err)
+		}
+		// Emit a deprecation warning for request-scoped conditions so operators
+		// migrating from pyFF are aware that these bodies will never execute in
+		// goFF.  The goFF MDQ server implements the equivalent semantics built-in.
+		if isRequestScopedCondition(parts[0]) {
+			slog.Warn("[pyFF compat] 'when "+cond+":' body will not execute in goFF — "+
+				"the built-in MDQ server handles request routing automatically. "+
+				"Remove this block or keep it for pyFF compatibility (it is safely ignored).",
+				"condition", cond)
 		}
 		return []Step{{Action: "when", When: WhenStep{
 			Condition: parts[0],

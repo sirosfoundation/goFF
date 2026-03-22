@@ -84,9 +84,9 @@ for MDQ sub-pipeline dispatch) is intentionally out of scope.
 
 ---
 
-### GAP-2 · Per-URL inline verification → ✅ CLOSED via `SourceEntry`
+### GAP-2 · Per-URL inline verification → ✅ CLOSED via `SourceEntry` + hash fingerprint
 
-**Implemented in:** commit `eda16f9`
+**Implemented in:** commit `eda16f9` (PEM cert), this release (hash fingerprints)
 
 `LoadStep` accepts structured source entries with per-source `verify` certs:
 
@@ -100,10 +100,31 @@ for MDQ sub-pipeline dispatch) is intentionally out of scope.
         verify: /path/to/safire-cert.pem
 ```
 
-**Limitation:** pyFF's colon-separated SHA-1/SHA-256 fingerprint inline notation
-(`URL A6:78:5A:...` on a single line) is not supported.  goFF requires a PEM cert
-file path.  Operators migrating from pyFF need to save the peer certificate to a
-file and reference it via `verify:`.
+**Hash fingerprint shorthand** (pyFF compat) is now supported in two forms:
+
+1. **Inline URL fingerprint** — append `|sha256:<hexhash>` or `|sha1:<hexhash>`
+   directly to the URL string.  goFF strips the suffix, fetches the clean URL, and
+   verifies the raw response bytes against the digest before XML parsing:
+
+   ```yaml
+   - load:
+     - https://mds.edugain.org/edugain-v2.xml|sha256:abc123...
+   ```
+
+2. **`verify:` hash shorthand** — set `verify:` to `sha256:<hexhash>`,
+   `sha1:<hexhash>`, or `md5:<hexhash>` instead of a PEM cert file path.  goFF
+   detects the `alg:hex` prefix and hashes the raw fetched/read body for
+   comparison instead of performing XML signature verification:
+
+   ```yaml
+   - load:
+       sources:
+         - url: https://mds.edugain.org/edugain-v2.xml
+           verify: sha256:abc123...
+   ```
+
+Both forms work with `load:` files and URLs.  MD5 is accepted for legacy pyFF
+compatibility but its use for new deployments is discouraged.
 
 ---
 
@@ -245,15 +266,17 @@ See also GAP-13 for the `store:` action which pyFF uses to write such directorie
 
 ---
 
-### GAP-10 · `publish:` options `urlencode_filenames`, `raw`, `ext` → ✅ PARTIALLY CLOSED
+### GAP-10 · `publish:` options `urlencode_filenames`, `raw`, `ext` → ✅ CLOSED
 
-**Implemented in:** commit `eda16f9`
+**Implemented in:** commit `eda16f9` (`urlencode_filenames`, `ext`), this release (`raw: true`)
 
 - **`urlencode_filenames: true`** — ✅ implemented; writes MDQ-compatible
   percent-encoded filenames (`%7Bsha256%7DHEXHASH`).
 - **`ext: <suffix>`** — ✅ implemented; overrides the default `.xml` extension.
-- **`raw: true`** — accepted but currently a no-op; `publish: {dir:}` always
-  writes raw entity XML (one `EntityDescriptor` per file).
+- **`raw: true`** — ✅ implemented; for single-file publish (`output:`), bypasses
+  `finalize` / `sign` processing and writes the in-memory entity XML directly as
+  an aggregate.  For directory publish (`dir:`), has always written raw per-entity
+  XML (no change).  This matches pyFF's `raw: True` semantics for both modes.
 - **`update_store: false`** — accepted (unknown keys are silently ignored by the
   Go YAML library); no pyFF store concept in goFF so has no effect regardless.
 
@@ -449,3 +472,64 @@ action list or their `when` bodies are), but their bodies are silently skipped
 during batch execution.  This means pyFF pipeline files that contain both a batch
 section (`when update:`) and a request section (`when request:`) can be loaded and
 executed in goFF without any YAML changes — only the batch portion fires.
+
+---
+
+## Additional pyFF compatibility improvements
+
+The following items do not correspond to specific pipeline GAPs but improve the
+drop-in compatibility of goFF with pyFF-authored pipelines.
+
+### `load: from:` named group alias
+
+`LoadStep` now supports a `from:` key that registers the loaded entity set under
+a named alias in the pipeline source map immediately after loading.  This lets
+subsequent `select:`, `setattr: selector:`, and other steps reference the loaded
+group by name — matching pyFF's `group` / source-alias behaviour:
+
+```yaml
+- load:
+    urls:
+      - https://mds.edugain.org/edugain-v2.xml
+    from: edugain      # register loaded entities as "edugain" alias
+- select:
+    entities: [edugain]
+```
+
+### `timeout:` integer seconds
+
+pyFF pipelines frequently specify HTTP timeouts as bare integers (seconds), e.g.
+`timeout: 60`.  Go's `time.ParseDuration` rejects bare integers.  goFF now
+accepts bare integer timeout values as a pyFF compatibility alias for the Go
+duration format `"60s"`:
+
+```yaml
+# both forms are now accepted
+- load:
+    urls: [...]
+    timeout: 60       # pyFF-style, accepted as 60s
+    timeout: 60s      # Go duration format
+```
+
+### HTTP proxy support (`HTTP_PROXY` / `HTTPS_PROXY`)
+
+goFF now respects the standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY`
+environment variables when fetching metadata URLs.  Set these to route metadata
+fetches through an outbound HTTP proxy:
+
+```sh
+export HTTPS_PROXY=http://proxy.example.org:3128
+goff batch --pipeline pipeline.yaml
+```
+
+### `GOFF_OUTPUT` / `GOFF_PIPELINE` environment variables for `batch` subcommand
+
+The `batch` subcommand now reads `GOFF_PIPELINE` and `GOFF_OUTPUT` from the
+environment as defaults for `--pipeline` and `--output` respectively, consistent
+with all flags on the `server` subcommand:
+
+```sh
+export GOFF_PIPELINE=pipeline.yaml
+export GOFF_OUTPUT=/var/www/metadata
+goff batch
+```

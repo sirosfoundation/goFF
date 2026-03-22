@@ -1,10 +1,11 @@
 package mdq
 
 import (
-	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,11 +16,26 @@ import (
 	"github.com/sirosfoundation/goff/internal/repo"
 )
 
+// logger returns the default structured logger used by the MDQ server.
+// Callers can replace the default by calling slog.SetDefault before starting.
+func logger() *slog.Logger { return slog.Default() }
+
 type handlerConfig struct {
 	isReady         func() bool
 	extraMetrics    func() map[string]any
 	requestCounters *RequestCounters
-	aggregateCfg    pipeline.AggregateConfig
+	// aggregateCfg is called per-request to obtain the current SAML aggregate
+	// parameters.  This allows the values to be updated atomically on refresh
+	// without restarting the server.
+	aggregateCfg func() pipeline.AggregateConfig
+	// discoJSON, when non-nil, returns the current discovery-service JSON feed
+	// entries.  The /entities endpoint serves this when the client sends
+	// Accept: application/disco+json.  Nil means no disco feed is available.
+	discoJSON func() []pipeline.DiscoEntry
+	// entityRenderer is called per-request to obtain the strategy for serializing
+	// a single entity to JSON (/entities/{id} with Accept: application/json).
+	// Defaults to MinimalRenderer when nil.
+	entityRenderer func() EntityRenderer
 	// baseURL is the externally-visible base URL of this server, used to
 	// derive @Name on the EntitiesDescriptor for aggregate responses.
 	// If empty the value is detected from X-Forwarded-* / Host headers.
@@ -64,13 +80,47 @@ func WithRequestCounters(c *RequestCounters) HandlerOption {
 	}
 }
 
-// WithAggregateConfig sets the SAML aggregate metadata attributes
+// WithAggregateConfig sets static SAML aggregate metadata attributes
 // (Name, CacheDuration, ValidUntil) applied to XML responses.
-// The @Name is overridden per-request by the base URL if one is configured
-// or can be detected from proxy headers.
+// For dynamic updates (e.g. after pipeline reload) use WithAggregateConfigFunc.
 func WithAggregateConfig(ac pipeline.AggregateConfig) HandlerOption {
 	return func(cfg *handlerConfig) {
-		cfg.aggregateCfg = ac
+		cfg.aggregateCfg = func() pipeline.AggregateConfig { return ac }
+	}
+}
+
+// WithAggregateConfigFunc sets a dynamic aggregate config provider.  The
+// function is called on every request, so atomic.Pointer-backed closures are
+// safe to use here.
+func WithAggregateConfigFunc(fn func() pipeline.AggregateConfig) HandlerOption {
+	return func(cfg *handlerConfig) {
+		cfg.aggregateCfg = fn
+	}
+}
+
+// WithDiscoJSON configures the /entities endpoint to serve a discovery-service
+// JSON feed when the client sends Accept: application/disco+json.  The function
+// is called per-request; use an atomic.Pointer-backed closure for safe dynamic
+// updates after pipeline refresh.
+func WithDiscoJSON(fn func() []pipeline.DiscoEntry) HandlerOption {
+	return func(cfg *handlerConfig) {
+		cfg.discoJSON = fn
+	}
+}
+
+// WithEntityRenderer sets a static EntityRenderer for /entities/{id} JSON responses.
+func WithEntityRenderer(r EntityRenderer) HandlerOption {
+	return func(cfg *handlerConfig) {
+		cfg.entityRenderer = func() EntityRenderer { return r }
+	}
+}
+
+// WithEntityRendererFunc sets a dynamic EntityRenderer provider for /entities/{id}
+// JSON responses.  The function is called on every matching request, so an
+// atomic.Pointer-backed closure is safe for live updates after pipeline refresh.
+func WithEntityRendererFunc(fn func() EntityRenderer) HandlerOption {
+	return func(cfg *handlerConfig) {
+		cfg.entityRenderer = fn
 	}
 }
 
@@ -91,6 +141,8 @@ func NewHandler(r *repo.Repository, opts ...HandlerOption) http.Handler {
 		isReady:         func() bool { return true },
 		extraMetrics:    func() map[string]any { return map[string]any{} },
 		requestCounters: &RequestCounters{},
+		aggregateCfg:    func() pipeline.AggregateConfig { return pipeline.AggregateConfig{} },
+		entityRenderer:  func() EntityRenderer { return MinimalRenderer{} },
 	}
 	for _, opt := range opts {
 		opt(cfg)
@@ -116,26 +168,36 @@ func NewHandler(r *repo.Repository, opts ...HandlerOption) http.Handler {
 		_, _ = w.Write([]byte("ready\n"))
 	})
 
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, req *http.Request) {
 		cfg.requestCounters.RequestsTotal.Add(1)
 		cfg.requestCounters.MetricsRequests.Add(1)
 
+		extra := cfg.extraMetrics()
+
+		// Prometheus text format when Accept: text/plain (or explicit openmetrics).
+		if wantsPrometheus(req.Header.Get("Accept")) {
+			w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+			rc := cfg.requestCounters
+			writePrometheusCounters(w, rc, extra)
+			return
+		}
+
 		payload := map[string]any{
 			"requests": map[string]uint64{
-				"total":               cfg.requestCounters.RequestsTotal.Load(),
-				"healthz":             cfg.requestCounters.HealthzRequests.Load(),
-				"readyz":              cfg.requestCounters.ReadyzRequests.Load(),
-				"metrics":             cfg.requestCounters.MetricsRequests.Load(),
-				"entities_list":       cfg.requestCounters.EntitiesListRequests.Load(),
-				"entity_lookup":       cfg.requestCounters.EntityLookupRequests.Load(),
-				"entity_lookup_404":   cfg.requestCounters.EntityLookupNotFound.Load(),
-				"entity_lookup_400":   cfg.requestCounters.EntityLookupBadInput.Load(),
-				"entity_lookup_406":   cfg.requestCounters.EntityLookupNotAccept.Load(),
-						"entity_list_406":     cfg.requestCounters.EntityListNotAccept.Load(),
+				"total":             cfg.requestCounters.RequestsTotal.Load(),
+				"healthz":           cfg.requestCounters.HealthzRequests.Load(),
+				"readyz":            cfg.requestCounters.ReadyzRequests.Load(),
+				"metrics":           cfg.requestCounters.MetricsRequests.Load(),
+				"entities_list":     cfg.requestCounters.EntitiesListRequests.Load(),
+				"entity_lookup":     cfg.requestCounters.EntityLookupRequests.Load(),
+				"entity_lookup_404": cfg.requestCounters.EntityLookupNotFound.Load(),
+				"entity_lookup_400": cfg.requestCounters.EntityLookupBadInput.Load(),
+				"entity_lookup_406": cfg.requestCounters.EntityLookupNotAccept.Load(),
+				"entity_list_406":   cfg.requestCounters.EntityListNotAccept.Load(),
 			},
 		}
 
-		for k, v := range cfg.extraMetrics() {
+		for k, v := range extra {
 			payload[k] = v
 		}
 
@@ -152,7 +214,7 @@ func NewHandler(r *repo.Repository, opts ...HandlerOption) http.Handler {
 		format := resolveListFormat(req.Header.Get("Accept"))
 		switch format {
 		case "xml":
-			ac := cfg.aggregateCfg
+			ac := cfg.aggregateCfg()
 			ac.Name = resolveAggregateName(cfg, req)
 			setCacheHeaders(w, ac)
 			w.Header().Set("Content-Type", "application/samlmetadata+xml")
@@ -164,6 +226,19 @@ func NewHandler(r *repo.Repository, opts ...HandlerOption) http.Handler {
 				}
 			}
 			_, _ = w.Write(pipeline.BuildEntitiesXML(ids, bodies, ac))
+		case "disco":
+			if cfg.discoJSON == nil {
+				// No disco feed configured; fall back to entity ID list.
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string][]string{"entities": r.List()})
+				return
+			}
+			entries := cfg.discoJSON()
+			if entries == nil {
+				entries = []pipeline.DiscoEntry{}
+			}
+			w.Header().Set("Content-Type", "application/disco+json")
+			_ = json.NewEncoder(w).Encode(entries)
 		case "json":
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string][]string{"entities": r.List()})
@@ -207,10 +282,20 @@ func NewHandler(r *repo.Repository, opts ...HandlerOption) http.Handler {
 		format := resolveFormat(req.Header.Get("Accept"), fromExt)
 		switch format {
 		case "json":
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"entityID": entityID})
+			renderer := cfg.entityRenderer()
+			var xmlBody string
+			if body, ok := r.Get(entityID); ok {
+				xmlBody = body
+			}
+			data, err := renderer.RenderEntity(entityID, xmlBody)
+			if err != nil {
+				http.Error(w, "render error", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", renderer.ContentType())
+			_, _ = w.Write(data)
 		case "xml":
-			setCacheHeaders(w, cfg.aggregateCfg)
+			setCacheHeaders(w, cfg.aggregateCfg())
 			w.Header().Set("Content-Type", "application/samlmetadata+xml")
 			var xmlBody string
 			if body, ok := r.Get(entityID); ok {
@@ -231,7 +316,50 @@ func NewHandler(r *repo.Repository, opts ...HandlerOption) http.Handler {
 		}
 	})
 
-	return mux
+	return securityHeaders(accessLog(mux))
+}
+
+// securityHeaders adds conservative HTTP security headers to every response.
+// When the connection uses TLS (r.TLS != nil), HSTS is also included.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		// MDQ serves only machine-readable XML/JSON; a deny-all CSP is safe.
+		w.Header().Set("Content-Security-Policy", "default-src 'none'")
+		if r.TLS != nil {
+			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// accessLog logs each request to the standard logger after it completes.
+func accessLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rw := &statusRecorder{ResponseWriter: w, code: http.StatusOK}
+		next.ServeHTTP(rw, r)
+		logger().Info("http",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rw.code,
+			"duration_ms", time.Since(start).Milliseconds(),
+			"remote", r.RemoteAddr,
+		)
+	})
+}
+
+// statusRecorder wraps ResponseWriter to capture the status code.
+type statusRecorder struct {
+	http.ResponseWriter
+	code int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.code = code
+	r.ResponseWriter.WriteHeader(code)
 }
 
 func splitEntityPath(raw string) (entityPath string, fromExt string) {
@@ -272,6 +400,9 @@ func resolveListFormat(accept string) string {
 	if a == "" || strings.Contains(a, "*/*") || strings.Contains(a, "application/*") || strings.Contains(a, "text/*") {
 		return "json"
 	}
+	if strings.Contains(a, "application/disco+json") {
+		return "disco"
+	}
 	if strings.Contains(a, "application/json") {
 		return "json"
 	}
@@ -282,8 +413,9 @@ func resolveListFormat(accept string) string {
 }
 
 // resolveSHA1EntityID resolves a pyFF MDQ-style {sha1}HEXHASH URI to the
-// stored entity ID by computing SHA1 over each known ID.  Returns ("", false)
-// if the path does not use the {sha1} prefix or no match is found.
+// stored entity ID using the repository's pre-built O(1) SHA-1 index.
+// Returns ("", false) if the path does not use the {sha1} prefix or no match
+// is found.
 func resolveSHA1EntityID(path string, r *repo.Repository) (string, bool) {
 	const prefix = "{sha1}"
 	if !strings.HasPrefix(path, prefix) {
@@ -293,13 +425,7 @@ func resolveSHA1EntityID(path string, r *repo.Repository) (string, bool) {
 	if wantHex == "" {
 		return "", false
 	}
-	for _, id := range r.List() {
-		h := sha1.Sum([]byte(id)) //nolint:gosec // SHA1 used only for MDQ URL matching, not security
-		if fmt.Sprintf("%x", h[:]) == wantHex {
-			return id, true
-		}
-	}
-	return "", false
+	return r.ResolveSHA1(wantHex)
 }
 
 // entityETag returns a quoted ETag value for an XML entity body derived from
@@ -310,11 +436,21 @@ func entityETag(body string) string {
 }
 
 func renderEntityXML(entityID string) string {
-	return fmt.Sprintf("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<md:EntityDescriptor xmlns:md=\"urn:oasis:names:tc:SAML:2.0:metadata\" entityID=\"%s\"></md:EntityDescriptor>\n", entityID)
+	var buf strings.Builder
+	buf.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+	buf.WriteString(`<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="`)
+	_ = xml.EscapeText(&buf, []byte(entityID))
+	buf.WriteString(`"></md:EntityDescriptor>` + "\n")
+	return buf.String()
 }
 
 // resolveAggregateName returns the @Name value for the /entities aggregate
 // response.  Priority: explicit baseURL config → X-Forwarded-* headers → Host.
+//
+// Production deployments should always set --base-url / GOFF_BASE_URL to avoid
+// relying on X-Forwarded-Host and X-Forwarded-Prefix headers from potentially
+// untrusted reverse proxies.  The returned value is XML-attribute-escaped by
+// BuildEntitiesXML before being written into the document.
 func resolveAggregateName(cfg *handlerConfig, req *http.Request) string {
 	if cfg.baseURL != "" {
 		return cfg.baseURL + "/entities"
@@ -335,7 +471,7 @@ func resolveAggregateName(cfg *handlerConfig, req *http.Request) string {
 		prefix := strings.TrimRight(req.Header.Get("X-Forwarded-Prefix"), "/")
 		return proto + "://" + host + prefix + "/entities"
 	}
-	return cfg.aggregateCfg.Name
+	return cfg.aggregateCfg().Name
 }
 
 // setCacheHeaders writes Cache-Control and Expires headers derived from
@@ -360,4 +496,62 @@ func setCacheHeaders(w http.ResponseWriter, ac pipeline.AggregateConfig) {
 type xmlGetter interface {
 	List() []string
 	Get(entityID string) (string, bool)
+}
+
+// wantsPrometheus returns true if the Accept header indicates the client can
+// accept Prometheus text exposition format.
+func wantsPrometheus(accept string) bool {
+	a := strings.ToLower(accept)
+	return strings.Contains(a, "text/plain") ||
+		strings.Contains(a, "application/openmetrics-text")
+}
+
+// writePrometheusCounters writes request counter metrics to w in the
+// Prometheus text exposition format (version 0.0.4).
+func writePrometheusCounters(w http.ResponseWriter, rc *RequestCounters, extra map[string]any) {
+	type labeledCounter struct {
+		endpoint string
+		value    uint64
+	}
+	counters := []labeledCounter{
+		{"healthz", rc.HealthzRequests.Load()},
+		{"readyz", rc.ReadyzRequests.Load()},
+		{"metrics", rc.MetricsRequests.Load()},
+		{"entities_list", rc.EntitiesListRequests.Load()},
+		{"entity_lookup", rc.EntityLookupRequests.Load()},
+	}
+	fmt.Fprintf(w, "# HELP goff_requests_total Total HTTP requests by endpoint.\n")
+	fmt.Fprintf(w, "# TYPE goff_requests_total counter\n")
+	for _, c := range counters {
+		fmt.Fprintf(w, "goff_requests_total{endpoint=%q} %d\n", c.endpoint, c.value)
+	}
+	fmt.Fprintf(w, "# HELP goff_http_errors_total HTTP error responses by status code.\n")
+	fmt.Fprintf(w, "# TYPE goff_http_errors_total counter\n")
+	fmt.Fprintf(w, "goff_http_errors_total{code=\"404\"} %d\n", rc.EntityLookupNotFound.Load())
+	fmt.Fprintf(w, "goff_http_errors_total{code=\"400\"} %d\n", rc.EntityLookupBadInput.Load())
+	fmt.Fprintf(w, "goff_http_errors_total{code=\"406\"} %d\n", rc.EntityLookupNotAccept.Load()+rc.EntityListNotAccept.Load())
+
+	// Expose extra metrics (refresh, entity_count) as gauges.
+	if refresh, ok := extra["refresh"].(map[string]any); ok {
+		if v, ok := refresh["entity_count"]; ok {
+			fmt.Fprintf(w, "# HELP goff_entity_count Number of entities in the current repository.\n")
+			fmt.Fprintf(w, "# TYPE goff_entity_count gauge\n")
+			fmt.Fprintf(w, "goff_entity_count %v\n", v)
+		}
+		if v, ok := refresh["success_total"]; ok {
+			fmt.Fprintf(w, "# HELP goff_refresh_success_total Total successful pipeline refresh runs.\n")
+			fmt.Fprintf(w, "# TYPE goff_refresh_success_total counter\n")
+			fmt.Fprintf(w, "goff_refresh_success_total %v\n", v)
+		}
+		if v, ok := refresh["failure_total"]; ok {
+			fmt.Fprintf(w, "# HELP goff_refresh_failure_total Total failed pipeline refresh runs.\n")
+			fmt.Fprintf(w, "# TYPE goff_refresh_failure_total counter\n")
+			fmt.Fprintf(w, "goff_refresh_failure_total %v\n", v)
+		}
+		if v, ok := refresh["stale_since_unix"]; ok {
+			fmt.Fprintf(w, "# HELP goff_stale_since_unix Unix timestamp of first consecutive refresh failure (0 = healthy).\n")
+			fmt.Fprintf(w, "# TYPE goff_stale_since_unix gauge\n")
+			fmt.Fprintf(w, "goff_stale_since_unix %v\n", v)
+		}
+	}
 }

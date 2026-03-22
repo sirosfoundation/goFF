@@ -212,7 +212,7 @@ func TestExecuteLoadFromSourceURL(t *testing.T) {
 
 	p := File{
 		Pipeline: []Step{
-			{Action: "load", Load: LoadStep{URLs: []string{ts.URL}}},
+			{Action: "load", Load: LoadStep{URLs: []string{ts.URL}, AllowPrivateAddrs: true}},
 		},
 	}
 
@@ -2332,7 +2332,8 @@ func TestExecuteLoadSourceEntryURLWithAlias(t *testing.T) {
 	p := File{
 		Pipeline: []Step{
 			{Action: "load", Load: LoadStep{
-				Sources: []SourceEntry{{URL: ts.URL + "/fed.xml", As: "/myfed"}},
+				Sources:           []SourceEntry{{URL: ts.URL + "/fed.xml", As: "/myfed"}},
+				AllowPrivateAddrs: true,
 			}},
 			{Action: "select"},
 			{Action: "setattr", SetAttr: SetAttrStep{
@@ -2399,7 +2400,8 @@ func TestExecuteLoadViaRunsBranchOnSource(t *testing.T) {
 				Condition: "update",
 				Body: []Step{
 					{Action: "load", Load: LoadStep{
-						Sources: []SourceEntry{{URL: ts.URL + "/fed.xml", Via: "normalize"}},
+						Sources:           []SourceEntry{{URL: ts.URL + "/fed.xml", Via: "normalize"}},
+						AllowPrivateAddrs: true,
 					}},
 					{Action: "publish", Publish: PublishStep{Output: "result.txt"}},
 				},
@@ -2450,7 +2452,8 @@ func TestExecuteLoadViaUnknownLabelPassesThrough(t *testing.T) {
 				Condition: "update",
 				Body: []Step{
 					{Action: "load", Load: LoadStep{
-						Sources: []SourceEntry{{URL: ts.URL + "/fed.xml", Via: "nonexistent"}},
+						Sources:           []SourceEntry{{URL: ts.URL + "/fed.xml", Via: "nonexistent"}},
+						AllowPrivateAddrs: true,
 					}},
 				},
 			}},
@@ -2509,5 +2512,80 @@ func TestWhenStepFiresOnlyWhenStateMatches(t *testing.T) {
 	}
 	if _, hasTok := a.TextTokens["country:se"]; !hasTok {
 		t.Errorf("expected country:se token after normalize branch, got: %v", a.TextTokens)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Gap #7 – load: from: named group alias
+// ---------------------------------------------------------------------------
+
+func TestLoadFromAlias(t *testing.T) {
+	fedAPath := filepath.Join("..", "..", "tests", "fixtures", "metadata", "select-fed-a.xml")
+
+	// Pipeline: load fed-a with from:fedA, then select from alias fedA.
+	p := File{
+		Pipeline: []Step{
+			{Action: "load", Load: LoadStep{
+				Files: []string{fedAPath},
+				From:  "fedA",
+			}},
+			{Action: "select", Select: SelectStep{
+				Entities: []string{"fedA"},
+			}},
+		},
+	}
+
+	res, err := Execute(p, t.TempDir())
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	// fedA contains 2 entities; the select with alias "fedA" should resolve them.
+	if len(res.Entities) != 2 {
+		t.Fatalf("expected 2 entities via from: alias, got %d: %v", len(res.Entities), res.Entities)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Gap #5 – publish: raw: true
+// ---------------------------------------------------------------------------
+
+func TestPublishRawTrueSkipsFinalizeAndSign(t *testing.T) {
+	fedAPath := filepath.Join("..", "..", "tests", "fixtures", "metadata", "select-fed-a.xml")
+	outDir := t.TempDir()
+
+	p := File{
+		Pipeline: []Step{
+			{Action: "load", Load: LoadStep{Files: []string{fedAPath}}},
+			{Action: "finalize", Finalize: FinalizeStep{
+				Name:          "https://metadata.example.org/aggregate",
+				CacheDuration: "PT1H",
+			}},
+			{Action: "publish", Publish: PublishStep{
+				Output: "raw.xml",
+				Raw:    true,
+			}},
+		},
+	}
+
+	_, err := Execute(p, outDir)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(outDir, "raw.xml"))
+	if err != nil {
+		t.Fatalf("failed reading raw.xml: %v", err)
+	}
+
+	// With raw: true, finalize attributes (Name, cacheDuration) must NOT appear.
+	if strings.Contains(string(got), "cacheDuration") {
+		t.Error("raw publish should not include cacheDuration from finalize step")
+	}
+	if strings.Contains(string(got), "https://metadata.example.org/aggregate") {
+		t.Error("raw publish should not include finalize Name attribute")
+	}
+	// But entity data should be present.
+	if !strings.Contains(string(got), "https://idp.example.org/idp") {
+		t.Error("expected entity ID present in raw publish output")
 	}
 }

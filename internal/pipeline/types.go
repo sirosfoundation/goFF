@@ -32,6 +32,11 @@ type Source struct {
 	Timeout  string   `yaml:"timeout"`
 	Retries  int      `yaml:"retries"`
 	Cleanup  bool     `yaml:"cleanup"`
+	// MaxBytes caps the size of each HTTP response body. Defaults to 100 MiB (104857600) when zero.
+	MaxBytes int64 `yaml:"max_bytes"`
+	// AllowPrivateAddrs disables the private-IP / cloud-metadata SSRF blocklist for this source.
+	// Enable only for intentionally internal or intranet federation endpoints.
+	AllowPrivateAddrs bool `yaml:"allow_private_addrs"`
 }
 
 // StoreStep writes the current entity set to a content-addressable on-disk
@@ -114,6 +119,8 @@ type SourceEntry struct {
 // Resources are given directly as files, URLs, or inline entity IDs.
 // In-pipeline aliases produced by "select as /name" can be referenced in Files.
 // Source entries in Sources support per-source aliases and cert verification.
+// From registers the loaded entity set under the given alias name in the source
+// map after loading (pyFF compat: makes the loaded data addressable by name).
 type LoadStep struct {
 	Files    []string      `yaml:"files"`
 	URLs     []string      `yaml:"urls"`
@@ -124,6 +131,10 @@ type LoadStep struct {
 	Cleanup  bool          `yaml:"cleanup"`
 	Entities []string      `yaml:"entities"`
 	Via      []string      `yaml:"via"`
+	From     string        `yaml:"from"`
+	// AllowPrivateAddrs disables the private-IP SSRF blocklist for all URL
+	// sources within this load step. Use for intentionally internal endpoints.
+	AllowPrivateAddrs bool `yaml:"allow_private_addrs"`
 }
 
 // SelectStep filters current entities to the provided set.
@@ -224,17 +235,32 @@ type SignStep struct {
 }
 
 // VerifyStep configures XML signature verification for published XML output.
+// Either Cert (single PEM file path) or Certs (list of PEM file paths) may be
+// set; both are accepted and merged into the verification certificate pool.
+// Multiple certificates allow key-rollover pipelines where the signer may use
+// either of two valid certs.
 type VerifyStep struct {
-	Cert string `yaml:"cert"`
+	Cert  string   `yaml:"cert"`
+	Certs []string `yaml:"certs"`
+	// CheckExpiry enables NotBefore/NotAfter validation on the verification certificates.
+	// Disabled by default to support the common SAML practice of pinning known certs
+	// independent of their PKI validity period.
+	CheckExpiry bool `yaml:"check_expiry"`
 }
 
 // PKCS11SignSettings mirrors PKCS#11 signer configuration.
 type PKCS11SignSettings struct {
 	ModulePath string `yaml:"module_path"`
 	SlotID     uint   `yaml:"slot_id"`
-	PIN        string `yaml:"pin"`
-	KeyLabel   string `yaml:"key_label"`
-	KeyID      string `yaml:"key_id"`
+	// PIN is the literal slot user PIN. Prefer PINEnv or PINFile to avoid
+	// storing secrets in the pipeline YAML file.
+	PIN string `yaml:"pin"`
+	// PINEnv names an environment variable whose value is the slot PIN.
+	PINEnv string `yaml:"pin_env"`
+	// PINFile is the path to a file whose first line contains the slot PIN.
+	PINFile  string `yaml:"pin_file"`
+	KeyLabel string `yaml:"key_label"`
+	KeyID    string `yaml:"key_id"`
 }
 
 // StatsStep configures stats output behavior.

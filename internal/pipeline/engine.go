@@ -24,6 +24,11 @@ type Result struct {
 	Finalize  FinalizeStep
 	Sign      SignStep
 	Verify    VerifyStep
+	// DiscoJSON holds the entries built by the most recent discojson/discojson_idp/
+	// discojson_sp step.  Nil when no discojson step was executed.  The MDQ server
+	// uses this to serve the discovery feed in-memory without reading the on-disk
+	// file written by the step.
+	DiscoJSON []DiscoEntry
 }
 
 // ExecuteOptions controls optional behavior of Execute.
@@ -102,6 +107,7 @@ func executeSteps(
 	opts ExecuteOptions,
 ) (Result, error) {
 	publishFirst := false
+	var discoJSONCfg []DiscoEntry
 
 	for i, step := range steps {
 		switch step.Action {
@@ -186,15 +192,21 @@ func executeSteps(
 		case "certreport":
 			runCertReport(current, currentXML)
 		case "discojson":
-			if err := runDiscoJSON(step.DiscoJSON, outputDir, current, currentAttrs, currentXML, ""); err != nil {
+			entries := BuildDiscoEntries(current, currentAttrs, currentXML, "")
+			discoJSONCfg = entries
+			if err := runDiscoJSON(step.DiscoJSON, outputDir, entries); err != nil {
 				return Result{}, fmt.Errorf("step %d discojson: %w", i, err)
 			}
 		case "discojson_idp":
-			if err := runDiscoJSON(step.DiscoJSON, outputDir, current, currentAttrs, currentXML, "idp"); err != nil {
+			entries := BuildDiscoEntries(current, currentAttrs, currentXML, "idp")
+			discoJSONCfg = entries
+			if err := runDiscoJSON(step.DiscoJSON, outputDir, entries); err != nil {
 				return Result{}, fmt.Errorf("step %d discojson_idp: %w", i, err)
 			}
 		case "discojson_sp":
-			if err := runDiscoJSON(step.DiscoJSON, outputDir, current, currentAttrs, currentXML, "sp"); err != nil {
+			entries := BuildDiscoEntries(current, currentAttrs, currentXML, "sp")
+			discoJSONCfg = entries
+			if err := runDiscoJSON(step.DiscoJSON, outputDir, entries); err != nil {
 				return Result{}, fmt.Errorf("step %d discojson_sp: %w", i, err)
 			}
 		case "xslt":
@@ -252,6 +264,9 @@ func executeSteps(
 				finalizeCfg = sub.Finalize
 				signCfg = sub.Sign
 				verifyCfg = sub.Verify
+				if sub.DiscoJSON != nil {
+					discoJSONCfg = sub.DiscoJSON
+				}
 				publishFirst = false
 				if err == errBreak {
 					// break inside a when body stops the outer pipeline too,
@@ -263,14 +278,47 @@ func executeSteps(
 						Finalize:  finalizeCfg,
 						Sign:      signCfg,
 						Verify:    verifyCfg,
+						DiscoJSON: discoJSONCfg,
 					}, errBreak
 				}
 			}
 			publishFirst = false
-		case "emit", "signcerts", "merge":
-			// Request-side / no-op actions: silently ignored in batch execution.
-		case "drop_xsi_type", "log_entity":
-			// pyFF XML cleanup / diagnostic no-ops.
+		case "emit":
+			// Request-side action: silently ignored in batch execution.
+			// In pyFF `emit` writes the current entity set as the HTTP response body.
+			// The goFF MDQ server handles content negotiation automatically.
+			if opts.Progress != nil {
+				opts.Progress(i, "emit", "INFO: emit is a no-op in goFF server mode (content negotiation is built-in)")
+			}
+		case "signcerts":
+			// signcerts is not supported in goFF — it is a certificate-signing
+			// workflow tool with no equivalent.  Warn so operators are aware.
+			if opts.Progress != nil {
+				opts.Progress(i, "signcerts", "WARNING: signcerts is not supported; step skipped")
+			}
+		case "merge":
+			// merge would propagate a fork branch's results back to the outer
+			// pipeline state; goFF's fork model does not support this.  Warn.
+			if opts.Progress != nil {
+				opts.Progress(i, "merge", "WARNING: merge is not supported in goFF; fork results remain isolated")
+			}
+		case "drop_xsi_type":
+			// Remove xsi:type attributes from all entity XML bodies in the
+			// current working set.  pyFF uses this before signing to strip
+			// annotations that some validators reject.
+			for _, entityID := range current {
+				xmlBody, ok := currentXML[entityID]
+				if !ok || strings.TrimSpace(xmlBody) == "" {
+					continue
+				}
+				cleaned, err := dropXSIType([]byte(xmlBody))
+				if err != nil {
+					// Non-fatal: log and leave original XML intact.
+					continue
+				}
+				currentXML[entityID] = string(cleaned)
+			}
+		case "log_entity":
 		case "map":
 			// pyFF per-entity iteration loop: run the sub-pipeline once per entity
 			// in the current working set, each time with a single-entity snapshot.
@@ -342,6 +390,9 @@ func executeSteps(
 				finalizeCfg = sub.Finalize
 				signCfg = sub.Sign
 				verifyCfg = sub.Verify
+				if sub.DiscoJSON != nil {
+					discoJSONCfg = sub.DiscoJSON
+				}
 			}
 			publishFirst = false
 		case "fork", "pipe", "parsecopy":
@@ -372,6 +423,7 @@ func executeSteps(
 				Finalize:  finalizeCfg,
 				Sign:      signCfg,
 				Verify:    verifyCfg,
+				DiscoJSON: discoJSONCfg,
 			}, errBreak
 		default:
 			return Result{}, fmt.Errorf("step %d: unsupported action %q", i, step.Action)
@@ -389,6 +441,7 @@ func executeSteps(
 		Finalize:  finalizeCfg,
 		Sign:      signCfg,
 		Verify:    verifyCfg,
+		DiscoJSON: discoJSONCfg,
 	}, nil
 }
 
@@ -474,13 +527,14 @@ func runLoad(cfg LoadStep, baseDir string, outputDir string, sourceMap map[strin
 
 		if len(realFiles) > 0 || len(cfg.URLs) > 0 {
 			src := resolveSourcePaths(Source{
-				ID:      "_load",
-				Files:   realFiles,
-				URLs:    cfg.URLs,
-				Verify:  cfg.Verify,
-				Timeout: cfg.Timeout,
-				Retries: cfg.Retries,
-				Cleanup: cfg.Cleanup,
+				ID:                "_load",
+				Files:             realFiles,
+				URLs:              cfg.URLs,
+				Verify:            cfg.Verify,
+				Timeout:           cfg.Timeout,
+				Retries:           cfg.Retries,
+				Cleanup:           cfg.Cleanup,
+				AllowPrivateAddrs: cfg.AllowPrivateAddrs,
 			}, baseDir)
 			data, err := loadSourceData(src)
 			if err != nil {
@@ -505,13 +559,14 @@ func runLoad(cfg LoadStep, baseDir string, outputDir string, sourceMap map[strin
 			}
 			cleanup := entry.Cleanup || cfg.Cleanup
 			entrySrc := resolveSourcePaths(Source{
-				ID:      "_load_entry",
-				Files:   entryFiles,
-				URLs:    entryURLs,
-				Verify:  verify,
-				Timeout: cfg.Timeout,
-				Retries: cfg.Retries,
-				Cleanup: cleanup,
+				ID:                "_load_entry",
+				Files:             entryFiles,
+				URLs:              entryURLs,
+				Verify:            verify,
+				Timeout:           cfg.Timeout,
+				Retries:           cfg.Retries,
+				Cleanup:           cleanup,
+				AllowPrivateAddrs: cfg.AllowPrivateAddrs,
 			}, baseDir)
 			entryData, err := loadSourceData(entrySrc)
 			if err != nil {
@@ -559,7 +614,18 @@ func runLoad(cfg LoadStep, baseDir string, outputDir string, sourceMap map[strin
 			}
 		}
 
-		return applyVia(allIDs, allAttrs, allDocs)
+		ids, attrs, docs, err := applyVia(allIDs, allAttrs, allDocs)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		// load: from: <alias> — register the loaded set as a named source alias
+		// so it can be referenced by subsequent pipeline steps (pyFF compat).
+		if cfg.From != "" {
+			sourceMap[cfg.From] = append([]string(nil), ids...)
+			sourceAttrs[cfg.From] = cloneAttrs(attrs)
+			sourceXML[cfg.From] = cloneEntityXML(docs)
+		}
+		return ids, attrs, docs, nil
 	}
 
 	return nil, nil, nil, fmt.Errorf("load: specify files, urls, sources, or entities")
@@ -918,7 +984,9 @@ func evaluateAttributeSelector(sel string, current []string, currentAttrs map[st
 }
 
 func evaluateSelectorURI(uri string, current []string, currentAttrs map[string]EntityAttributes, currentXML map[string]string, sourceMap map[string][]string, sourceAttrs map[string]map[string]EntityAttributes, sourceXML map[string]map[string]string) ([]string, bool) {
-	b, err := fetchURL(Source{}, uri)
+	// Selector URLs are operator-controlled pipeline configuration, so the
+	// private-address SSRF blocklist is bypassed here.
+	b, err := fetchURL(Source{AllowPrivateAddrs: true}, uri)
 	if err != nil {
 		return nil, false
 	}
@@ -1447,9 +1515,19 @@ func runPublish(cfg PublishStep, outputDir string, current []string, currentXML 
 		return fmt.Errorf("create publish output directory: %w", err)
 	}
 
-	body, err := formatOutput(path, current, currentXML, fin, signCfg, verifyCfg, first)
-	if err != nil {
-		return err
+	var body []byte
+	var err error
+	if cfg.Raw {
+		// raw: true — bypass finalize/sign and write the aggregate using raw
+		// in-memory entity XML.  This preserves the original entity XML bytes
+		// (e.g. as fetched from a federation feed) without re-serialisation or
+		// crypto annotation, matching pyFF's raw-publish semantics.
+		body = BuildEntitiesXML(current, currentXML, AggregateConfig{})
+	} else {
+		body, err = formatOutput(path, current, currentXML, fin, signCfg, verifyCfg, first)
+		if err != nil {
+			return err
+		}
 	}
 
 	if err := os.WriteFile(path, body, 0o644); err != nil {
@@ -1575,7 +1653,7 @@ func runPublishDir(cfg PublishStep, outputDir string, current []string, currentX
 
 func formatOutput(path string, current []string, currentXML map[string]string, fin FinalizeStep, signCfg SignStep, verifyCfg VerifyStep, first bool) ([]byte, error) {
 	hasSign := signCfg.Key != "" || signCfg.Cert != "" || signCfg.PKCS11 != nil
-	hasVerify := verifyCfg.Cert != ""
+	hasVerify := verifyCfg.Cert != "" || len(verifyCfg.Certs) > 0
 
 	if strings.HasSuffix(strings.ToLower(path), ".xml") {
 		var b []byte

@@ -18,6 +18,39 @@
 #
 # REQUIREMENTS: replace sign.key / sign.crt with real file paths, and
 # set Name to the externally-visible base URL of your MDQ service.
+#
+# ── pyFF compatibility notes ─────────────────────────────────────────────────
+#
+#  when update: / when batch:
+#    These bodies execute normally — they are the standard update-scope path.
+#
+#  finalize:
+#    The Name, cacheDuration, and validUntil values from the `finalize:` step
+#    are automatically forwarded to the live server and applied to every XML
+#    aggregate response.  CLI flags (--cache-duration, --valid-until) override
+#    the pipeline values when both are set.
+#
+#  discojson:
+#    The discovery feed is built in-memory and served by the goFF server at
+#    GET /entities with Accept: application/disco+json, so the `output:` file
+#    path is optional (but still written when provided).
+#
+#  when request: / when accept: / when path:
+#    These conditions are request-scoped and will NOT execute in goFF.  At
+#    parse time goFF emits a deprecation warning for each occurrence.  The
+#    equivalent behaviour is handled automatically by the built-in server:
+#      - Content negotiation (Accept: application/samlmetadata+xml vs JSON)
+#      - Per-entity lookup  (/entities/{id} or /entities/{sha1}HASH)
+#      - Entity-list endpoint  (/entities)
+#      - ETag / If-None-Match 304 handling
+#      - Discovery JSON endpoint (Accept: application/disco+json)
+#    Remove these blocks from your pipeline; no manual porting is needed.
+#
+#  emit:
+#    emit is a no-op in goFF (logged as INFO).  Content is served directly
+#    by the MDQ server based on the Accept header.
+#
+# ─────────────────────────────────────────────────────────────────────────────
 
 - when update:
     - load:

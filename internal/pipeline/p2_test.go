@@ -115,7 +115,7 @@ func TestDiscoJSONWritesOutputFile(t *testing.T) {
 	}
 
 	cfg := DiscoJSONStep{Output: "disco.json"}
-	if err := runDiscoJSON(cfg, outDir, entities, attrs, xmlDocs, ""); err != nil {
+	if err := runDiscoJSON(cfg, outDir, BuildDiscoEntries(entities, attrs, xmlDocs, "")); err != nil {
 		t.Fatalf("runDiscoJSON returned error: %v", err)
 	}
 
@@ -193,7 +193,7 @@ func TestDiscoJSONIdpFilter(t *testing.T) {
 	}
 
 	cfg := DiscoJSONStep{Output: "disco-idp.json"}
-	if err := runDiscoJSON(cfg, outDir, entities, attrs, xmlDocs, "idp"); err != nil {
+	if err := runDiscoJSON(cfg, outDir, BuildDiscoEntries(entities, attrs, xmlDocs, "idp")); err != nil {
 		t.Fatalf("runDiscoJSON (idp) returned error: %v", err)
 	}
 

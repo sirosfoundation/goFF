@@ -25,10 +25,12 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -38,6 +40,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -515,6 +518,160 @@ func TestEduGAINMDQServer(t *testing.T) {
 	t.Run("swamid_presence_and_integrity", func(t *testing.T) {
 		testSWAMIDPresenceAndIntegrity(t, addr, swamidFeed)
 	})
+
+	// -----------------------------------------------------------------------
+	// Resolve an entity ID to use for protocol-level sub-tests (sha1, ETag).
+	// We pick a deterministic choice (alphabetically first) from the JSON list
+	// so the sub-tests are stable across runs.
+	// -----------------------------------------------------------------------
+	var testEntityID string
+	func() {
+		resp, err := http.Get(fmt.Sprintf("http://%s/entities", addr)) //nolint:noctx,gosec
+		if err != nil {
+			t.Logf("entities list for sub-tests unavailable: %v", err)
+			return
+		}
+		defer resp.Body.Close()
+		var payload struct {
+			Entities []string `json:"entities"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil || len(payload.Entities) == 0 {
+			return
+		}
+		sorted := append([]string(nil), payload.Entities...)
+		sort.Strings(sorted)
+		testEntityID = sorted[0]
+	}()
+
+	t.Run("entity_count_sanity", func(t *testing.T) {
+		resp, err := http.Get(fmt.Sprintf("http://%s/entities", addr)) //nolint:noctx,gosec
+		if err != nil {
+			t.Fatalf("GET /entities: %v", err)
+		}
+		defer resp.Body.Close()
+		var payload struct {
+			Entities []string `json:"entities"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode JSON: %v", err)
+		}
+		const minEntities = 1000
+		if n := len(payload.Entities); n < minEntities {
+			t.Errorf("expected ≥%d entities in aggregate, got %d", minEntities, n)
+		} else {
+			t.Logf("aggregate contains %d entities", n)
+		}
+	})
+
+	t.Run("aggregate_xml_name", func(t *testing.T) {
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet,
+			fmt.Sprintf("http://%s/entities", addr), nil)
+		req.Header.Set("Accept", "application/samlmetadata+xml")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET /entities XML: %v", err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		// The MDQ spec requires the aggregate EntitiesDescriptor to carry a
+		// Name attribute whose value is the "/entities" URL.
+		if !bytes.Contains(body, []byte(`Name="`)) {
+			t.Error("aggregate EntitiesDescriptor is missing the Name attribute")
+		}
+		if !bytes.Contains(body, []byte("/entities")) {
+			t.Error("aggregate Name attribute does not contain the /entities path")
+		}
+	})
+
+	t.Run("unknown_entity_404", func(t *testing.T) {
+		fabricatedID := "https://no-such-entity.invalid/idp"
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet,
+			fmt.Sprintf("http://%s/entities/%s", addr, url.PathEscape(fabricatedID)), nil)
+		if err != nil {
+			t.Fatalf("build request: %v", err)
+		}
+		req.Header.Set("Accept", "application/samlmetadata+xml")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("MDQ lookup: %v", err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("expected 404 for unknown entity, got %d", resp.StatusCode)
+		}
+	})
+
+	if testEntityID != "" {
+		t.Run("sha1_lookup", func(t *testing.T) {
+			//nolint:gosec // SHA1 used only for MDQ URL matching, not security.
+			h := sha1.Sum([]byte(testEntityID))
+			sha1ID := fmt.Sprintf("{sha1}%x", h[:])
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet,
+				fmt.Sprintf("http://%s/entities/%s", addr, url.PathEscape(sha1ID)), nil)
+			if err != nil {
+				t.Fatalf("build request: %v", err)
+			}
+			req.Header.Set("Accept", "application/samlmetadata+xml")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("sha1 lookup: %v", err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("expected 200 for sha1 lookup of %q, got %d", testEntityID, resp.StatusCode)
+			}
+			// Verify the returned XML actually contains the original entityID.
+			if !bytes.Contains(body, []byte(testEntityID)) {
+				t.Errorf("sha1 lookup response does not contain entityID %q", testEntityID)
+			}
+		})
+
+		t.Run("etag_caching", func(t *testing.T) {
+			entityURL := fmt.Sprintf("http://%s/entities/%s", addr, url.PathEscape(testEntityID))
+
+			// First request: expect 200 + ETag.
+			req1, err := http.NewRequestWithContext(t.Context(), http.MethodGet, entityURL, nil)
+			if err != nil {
+				t.Fatalf("build request: %v", err)
+			}
+			req1.Header.Set("Accept", "application/samlmetadata+xml")
+			resp1, err := http.DefaultClient.Do(req1)
+			if err != nil {
+				t.Fatalf("first GET: %v", err)
+			}
+			_, _ = io.Copy(io.Discard, resp1.Body)
+			_ = resp1.Body.Close()
+			if resp1.StatusCode != http.StatusOK {
+				t.Fatalf("expected 200 on first GET, got %d", resp1.StatusCode)
+			}
+			etag := resp1.Header.Get("ETag")
+			if etag == "" {
+				t.Fatal("first GET did not return an ETag header")
+			}
+			t.Logf("ETag: %s", etag)
+
+			// Second request with matching If-None-Match: expect 304 empty body.
+			req2, err := http.NewRequestWithContext(t.Context(), http.MethodGet, entityURL, nil)
+			if err != nil {
+				t.Fatalf("build request 2: %v", err)
+			}
+			req2.Header.Set("Accept", "application/samlmetadata+xml")
+			req2.Header.Set("If-None-Match", etag)
+			resp2, err := http.DefaultClient.Do(req2)
+			if err != nil {
+				t.Fatalf("second GET (If-None-Match): %v", err)
+			}
+			body2, _ := io.ReadAll(resp2.Body)
+			_ = resp2.Body.Close()
+			if resp2.StatusCode != http.StatusNotModified {
+				t.Errorf("expected 304 with matching ETag, got %d", resp2.StatusCode)
+			}
+			if len(body2) != 0 {
+				t.Errorf("expected empty body on 304, got %d bytes", len(body2))
+			}
+		})
+	}
 }
 
 // testSWAMIDPresenceAndIntegrity samples swamidSampleSize entity IDs from the

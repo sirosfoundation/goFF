@@ -127,6 +127,7 @@ func TestRunServerRefreshesFromURLSource(t *testing.T) {
 
 	pipelinePath := filepath.Join(t.TempDir(), "pipeline.yaml")
 	writeFile(t, pipelinePath, fmt.Sprintf(`- load:
+    allow_private_addrs: true
     urls:
       - %s
 `, ts.URL))

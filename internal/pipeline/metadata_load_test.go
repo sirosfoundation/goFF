@@ -1,6 +1,11 @@
 package pipeline
 
 import (
+	"crypto/md5"  //nolint:gosec
+	"crypto/sha1" //nolint:gosec
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -39,7 +44,7 @@ func TestLoadSourceDataURLStatusError(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	_, err := loadSourceData(Source{ID: "federation", URLs: []string{ts.URL}})
+	_, err := loadSourceData(Source{ID: "federation", URLs: []string{ts.URL}, AllowPrivateAddrs: true})
 	if err == nil {
 		t.Fatal("expected loadSourceData to fail for non-2xx source URL")
 	}
@@ -154,7 +159,7 @@ func TestLoadSourceDataURLRetriesEventuallySucceeds(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	data, err := loadSourceData(Source{ID: "retry-source", URLs: []string{ts.URL}, Retries: 1})
+	data, err := loadSourceData(Source{ID: "retry-source", URLs: []string{ts.URL}, Retries: 1, AllowPrivateAddrs: true})
 	if err != nil {
 		t.Fatalf("loadSourceData returned error: %v", err)
 	}
@@ -302,11 +307,244 @@ func TestLoadSourceDataXRDFileExpands(t *testing.T) {
 		t.Fatalf("failed writing XRD fixture: %v", err)
 	}
 
-	data, err := loadSourceData(Source{ID: "xrd-source", Files: []string{xrdFile}})
+	data, err := loadSourceData(Source{ID: "xrd-source", Files: []string{xrdFile}, AllowPrivateAddrs: true})
 	if err != nil {
 		t.Fatalf("loadSourceData returned error: %v", err)
 	}
 	if len(data.EntityIDs) != 1 || data.EntityIDs[0] != "https://idp.example.org/xrd-expanded" {
 		t.Fatalf("unexpected loaded entities: %#v", data.EntityIDs)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Gap #3 – timeout: integer seconds compatibility
+// ---------------------------------------------------------------------------
+
+func TestFetchURLTimeoutIntegerSeconds(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata">
+  <md:EntityDescriptor entityID="https://idp.example.org/timeout-compat">
+    <md:IDPSSODescriptor/>
+  </md:EntityDescriptor>
+</md:EntitiesDescriptor>`))
+	}))
+	defer ts.Close()
+
+	// Bare integer timeout "30" (seconds) should work without error.
+	data, err := loadSourceData(Source{
+		ID:                "timeout-src",
+		URLs:              []string{ts.URL},
+		Timeout:           "30",
+		AllowPrivateAddrs: true,
+	})
+	if err != nil {
+		t.Fatalf("loadSourceData returned error with integer timeout: %v", err)
+	}
+	if len(data.EntityIDs) != 1 {
+		t.Fatalf("expected 1 entity, got %d", len(data.EntityIDs))
+	}
+}
+
+func TestFetchURLTimeoutInvalidStringReturnsError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	_, err := loadSourceData(Source{
+		ID:                "timeout-bad",
+		URLs:              []string{ts.URL},
+		Timeout:           "not-a-duration",
+		AllowPrivateAddrs: true,
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid timeout string")
+	}
+	if !strings.Contains(err.Error(), "invalid source timeout") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Gap #6 – verify: hash shorthand (sha256:, sha1:, md5:)
+// ---------------------------------------------------------------------------
+
+func TestTryVerifyBodyHashMatchAndMismatch(t *testing.T) {
+	body := []byte("hello metadata")
+
+	sha256hex := fmt.Sprintf("%x", sha256.Sum256(body))
+	sha1h := sha1.Sum(body) //nolint:gosec
+	sha1hex := hex.EncodeToString(sha1h[:])
+	md5h := md5.Sum(body) //nolint:gosec
+	md5hex := hex.EncodeToString(md5h[:])
+
+	cases := []struct {
+		name    string
+		spec    string
+		wantOK  bool
+		wantErr bool
+	}{
+		{"sha256 match", "sha256:" + sha256hex, true, false},
+		{"sha256 mismatch", "sha256:deadbeef", true, true},
+		{"sha1 match", "sha1:" + sha1hex, true, false},
+		{"sha1 mismatch", "sha1:deadbeef", true, true},
+		{"md5 match", "md5:" + md5hex, true, false},
+		{"md5 mismatch", "md5:deadbeef", true, true},
+		{"cert path (no colon)", "/path/cert.pem", false, false},
+		{"empty string", "", false, false},
+		{"unknown alg", "blah:abc123", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err, ok := tryVerifyBodyHash(body, tc.spec)
+			if ok != tc.wantOK {
+				t.Fatalf("ok: got %v want %v", ok, tc.wantOK)
+			}
+			if tc.wantErr && err == nil {
+				t.Fatal("expected non-nil error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestVerifySourceIfConfiguredHashShorthand(t *testing.T) {
+	body := []byte(`<?xml version="1.0"?>
+<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"/>`)
+
+	h := sha256.Sum256(body)
+	spec := "sha256:" + fmt.Sprintf("%x", h)
+
+	src := Source{ID: "test", Verify: spec}
+	if err := verifySourceIfConfigured(src, body); err != nil {
+		t.Fatalf("verifySourceIfConfigured returned unexpected error: %v", err)
+	}
+
+	srcBad := Source{ID: "test", Verify: "sha256:deadbeef"}
+	if err := verifySourceIfConfigured(srcBad, body); err == nil {
+		t.Fatal("expected fingerprint mismatch error")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Gap #1 – inline |sha256: fingerprint in load URLs
+// ---------------------------------------------------------------------------
+
+func TestParseURLFingerprint(t *testing.T) {
+	cases := []struct {
+		input      string
+		wantURL    string
+		wantAlg    string
+		wantDigest string
+	}{
+		{
+			input:      "https://mds.example.org/fed.xml|sha256:abc123",
+			wantURL:    "https://mds.example.org/fed.xml",
+			wantAlg:    "sha256",
+			wantDigest: "abc123",
+		},
+		{
+			input:      "https://mds.example.org/fed.xml|sha1:DEADBEEF",
+			wantURL:    "https://mds.example.org/fed.xml",
+			wantAlg:    "sha1",
+			wantDigest: "deadbeef",
+		},
+		{
+			input:      "https://mds.example.org/fed.xml",
+			wantURL:    "https://mds.example.org/fed.xml",
+			wantAlg:    "",
+			wantDigest: "",
+		},
+		{
+			// Unknown prefix — should be left as-is.
+			input:      "https://example.org/|unknown:abc",
+			wantURL:    "https://example.org/|unknown:abc",
+			wantAlg:    "",
+			wantDigest: "",
+		},
+		{
+			// No colon after pipe — not a fingerprint.
+			input:      "https://example.org/|notafingerprint",
+			wantURL:    "https://example.org/|notafingerprint",
+			wantAlg:    "",
+			wantDigest: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			gotURL, gotAlg, gotDigest := parseURLFingerprint(tc.input)
+			if gotURL != tc.wantURL {
+				t.Errorf("url: got %q want %q", gotURL, tc.wantURL)
+			}
+			if gotAlg != tc.wantAlg {
+				t.Errorf("alg: got %q want %q", gotAlg, tc.wantAlg)
+			}
+			if gotDigest != tc.wantDigest {
+				t.Errorf("digest: got %q want %q", gotDigest, tc.wantDigest)
+			}
+		})
+	}
+}
+
+func TestLoadSourceDataInlineURLFingerprintMatch(t *testing.T) {
+	body := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata">
+  <md:EntityDescriptor entityID="https://idp.example.org/fp-ok">
+    <md:IDPSSODescriptor/>
+  </md:EntityDescriptor>
+</md:EntitiesDescriptor>`)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write(body)
+	}))
+	defer ts.Close()
+
+	h := sha256.Sum256(body)
+	fingerprintURL := ts.URL + "|sha256:" + fmt.Sprintf("%x", h)
+
+	data, err := loadSourceData(Source{
+		ID:                "fp-src",
+		URLs:              []string{fingerprintURL},
+		AllowPrivateAddrs: true,
+	})
+	if err != nil {
+		t.Fatalf("loadSourceData returned error: %v", err)
+	}
+	if len(data.EntityIDs) != 1 || data.EntityIDs[0] != "https://idp.example.org/fp-ok" {
+		t.Fatalf("unexpected entities: %#v", data.EntityIDs)
+	}
+}
+
+func TestLoadSourceDataInlineURLFingerprintMismatch(t *testing.T) {
+	body := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata">
+  <md:EntityDescriptor entityID="https://idp.example.org/fp-bad">
+    <md:IDPSSODescriptor/>
+  </md:EntityDescriptor>
+</md:EntitiesDescriptor>`)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write(body)
+	}))
+	defer ts.Close()
+
+	badFingerprintURL := ts.URL + "|sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+	_, err := loadSourceData(Source{
+		ID:                "fp-bad-src",
+		URLs:              []string{badFingerprintURL},
+		AllowPrivateAddrs: true,
+	})
+	if err == nil {
+		t.Fatal("expected fingerprint mismatch error")
+	}
+	if !strings.Contains(err.Error(), "fingerprint mismatch") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

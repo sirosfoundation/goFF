@@ -53,10 +53,10 @@ type GeoHint struct {
 	Lon float64 `json:"lon"`
 }
 
-// runDiscoJSON renders the current entity set as a discovery JSON feed and
-// writes it to cfg.Output inside outputDir.  roleFilter restricts output to
-// entities carrying the given role ("idp" or "sp"); empty means all entities.
-func runDiscoJSON(cfg DiscoJSONStep, outputDir string, current []string, attrs map[string]EntityAttributes, xmlDocs map[string]string, roleFilter string) error {
+// BuildDiscoEntries constructs the discovery JSON feed entries for the given
+// entity set.  roleFilter restricts output to entities with the given role
+// ("idp" or "sp"); an empty string returns entries for all entities.
+func BuildDiscoEntries(current []string, attrs map[string]EntityAttributes, xmlDocs map[string]string, roleFilter string) []DiscoEntry {
 	entries := make([]DiscoEntry, 0, len(current))
 	for _, entityID := range current {
 		a := attrs[entityID]
@@ -71,11 +71,15 @@ func runDiscoJSON(cfg DiscoJSONStep, outputDir string, current []string, attrs m
 		}
 		entries = append(entries, entry)
 	}
+	return entries
+}
 
+// runDiscoJSON writes pre-built DiscoEntry values to the output file specified
+// in cfg.  It is a no-op when cfg.Output is empty.
+func runDiscoJSON(cfg DiscoJSONStep, outputDir string, entries []DiscoEntry) error {
 	if cfg.Output == "" {
 		return nil
 	}
-
 	data, err := json.MarshalIndent(entries, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal disco json: %w", err)
