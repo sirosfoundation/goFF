@@ -26,6 +26,6 @@ require (
 	golang.org/x/text v0.35.0 // indirect
 )
 
-replace vc => github.com/SUNET/vc v0.4.0
+replace vc => github.com/SUNET/vc v0.4.3
 
 replace github.com/russellhaering/goxmldsig => github.com/sirosfoundation/goxmldsig v1.6.0-siros2

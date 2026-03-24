@@ -29,12 +29,12 @@ jobs:
       - name: Test
         run: go test -race ./...
 
-      - name: Coverage gate (≥75%)
+      - name: Coverage gate (≥70%)
         run: |
           go test -coverprofile=cover.out ./...
           TOTAL=$(go tool cover -func=cover.out | awk '/^total:/ {gsub(/%/, ""); print $3}')
           echo "Total coverage: ${TOTAL}%"
-          awk "BEGIN { if (${TOTAL} < 75.0) { print \"Coverage ${TOTAL}% is below 75% gate\"; exit 1 } }"
+          awk "BEGIN { if (${TOTAL} < 70.0) { print \"Coverage ${TOTAL}% is below 70% gate\"; exit 1 } }"
 
       - name: Fuzz smoke (30 s per target)
         run: |

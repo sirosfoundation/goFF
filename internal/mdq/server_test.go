@@ -555,3 +555,172 @@ func TestEntityLookupJSONWithDynamicRendererFunc(t *testing.T) {
 		t.Fatalf("expected application/disco+json after hot-swap, got %q", rr.Header().Get("Content-Type"))
 	}
 }
+
+func TestWithAggregateConfigFunc(t *testing.T) {
+	var ptr atomic.Pointer[pipeline.AggregateConfig]
+	ptr.Store(&pipeline.AggregateConfig{CacheDuration: "PT1H"})
+
+	h := NewHandler(
+		repo.New([]string{"https://idp.example.org/idp"}),
+		WithAggregateConfigFunc(func() pipeline.AggregateConfig { return *ptr.Load() }),
+		WithBaseURL("https://mdq.test"),
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/entities", nil)
+	req.Header.Set("Accept", "application/samlmetadata+xml")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `cacheDuration="PT1H"`) {
+		t.Errorf("expected cacheDuration=PT1H in aggregate, got: %s", body)
+	}
+
+	// Dynamic update: swap config atomically.
+	ptr.Store(&pipeline.AggregateConfig{CacheDuration: "PT2H"})
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/entities", nil))
+	// JSON list still works after config swap.
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 after config swap, got %d", rr.Code)
+	}
+}
+
+func TestWithDiscoJSON(t *testing.T) {
+	entries := []pipeline.DiscoEntry{
+		{EntityID: "https://idp.example.org/idp", Type: []string{"idp"}},
+	}
+	h := NewHandler(
+		repo.New([]string{"https://idp.example.org/idp"}),
+		WithDiscoJSON(func() []pipeline.DiscoEntry { return entries }),
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/entities", nil)
+	req.Header.Set("Accept", "application/disco+json")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if rr.Header().Get("Content-Type") != "application/disco+json" {
+		t.Fatalf("expected application/disco+json, got %q", rr.Header().Get("Content-Type"))
+	}
+
+	var got []pipeline.DiscoEntry
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if len(got) != 1 || got[0].EntityID != entries[0].EntityID {
+		t.Errorf("unexpected disco entries: %+v", got)
+	}
+}
+
+func TestWithDiscoJSONNilEntries(t *testing.T) {
+	// When disco func returns nil, server should return empty array, not null.
+	h := NewHandler(
+		repo.New(nil),
+		WithDiscoJSON(func() []pipeline.DiscoEntry { return nil }),
+	)
+	req := httptest.NewRequest(http.MethodGet, "/entities", nil)
+	req.Header.Set("Accept", "application/disco+json")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := strings.TrimSpace(rr.Body.String())
+	if body != "[]" {
+		t.Errorf("expected empty JSON array, got %q", body)
+	}
+}
+
+func TestMetricsPrometheus(t *testing.T) {
+	counters := &RequestCounters{}
+	h := NewHandler(
+		repo.New([]string{"https://idp.example.org/idp"}),
+		WithRequestCounters(counters),
+		WithExtraMetrics(func() map[string]any {
+			return map[string]any{
+				"refresh": map[string]any{
+					"entity_count":    42,
+					"success_total":   10,
+					"failure_total":   2,
+					"stale_since_unix": 0,
+				},
+			}
+		}),
+	)
+
+	// Drive some requests.
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", nil))
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Accept", "text/plain")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "goff_requests_total") {
+		t.Error("missing goff_requests_total in prometheus output")
+	}
+	if !strings.Contains(body, "goff_entity_count 42") {
+		t.Error("missing goff_entity_count in prometheus output")
+	}
+	if !strings.Contains(body, "goff_refresh_success_total 10") {
+		t.Error("missing goff_refresh_success_total in prometheus output")
+	}
+	if !strings.Contains(body, "goff_refresh_failure_total 2") {
+		t.Error("missing goff_refresh_failure_total in prometheus output")
+	}
+	if !strings.Contains(body, "goff_stale_since_unix 0") {
+		t.Error("missing goff_stale_since_unix in prometheus output")
+	}
+}
+
+func TestEntitiesDiscoFallbackWithoutDiscoFunc(t *testing.T) {
+	// Without WithDiscoJSON, Accept: disco+json should fall back to entity ID list.
+	h := NewHandler(repo.New([]string{"https://idp.example.org/idp"}))
+	req := httptest.NewRequest(http.MethodGet, "/entities", nil)
+	req.Header.Set("Accept", "application/disco+json")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("expected application/json fallback, got %q", rr.Header().Get("Content-Type"))
+	}
+}
+
+func TestEntitiesListNotAcceptable(t *testing.T) {
+	h := NewHandler(repo.New([]string{"https://idp.example.org/idp"}))
+	req := httptest.NewRequest(http.MethodGet, "/entities", nil)
+	req.Header.Set("Accept", "image/png")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotAcceptable {
+		t.Fatalf("expected 406, got %d", rr.Code)
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	h := NewHandler(repo.New(nil))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rr.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Error("missing X-Content-Type-Options")
+	}
+	if rr.Header().Get("X-Frame-Options") != "DENY" {
+		t.Error("missing X-Frame-Options")
+	}
+	if rr.Header().Get("Content-Security-Policy") == "" {
+		t.Error("missing Content-Security-Policy")
+	}
+}

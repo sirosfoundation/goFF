@@ -1,5 +1,5 @@
-github.com/SUNET/vc v0.4.0 h1:xno1VruZN4fZSrIqDoiq9eXiDBq+PxiB1hFUKg3xyZs=
-github.com/SUNET/vc v0.4.0/go.mod h1:iHeSaBCs0z9IMXb/hSO7hHPc8AMiLh+EALNJm5E67uM=
+github.com/SUNET/vc v0.4.3 h1:Kpc81fxFF8qDTwDebyAWNo6UtFbEwhjDBn3ykzWWv74=
+github.com/SUNET/vc v0.4.3/go.mod h1:iHeSaBCs0z9IMXb/hSO7hHPc8AMiLh+EALNJm5E67uM=
 github.com/antchfx/xmlquery v1.5.0 h1:uAi+mO40ZWfyU6mlUBxRVvL6uBNZ6LMU4M3+mQIBV4c=
 github.com/antchfx/xmlquery v1.5.0/go.mod h1:lJfWRXzYMK1ss32zm1GQV3gMIW/HFey3xDZmkP1SuNc=
 github.com/antchfx/xpath v1.3.5 h1:PqbXLC3TkfeZyakF5eeh3NTWEbYl4VHNVeufANzDbKQ=
