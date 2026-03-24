@@ -36,7 +36,7 @@ func TestNodeCountryAddsCountryTokens(t *testing.T) {
 		"https://sp.example.org/sp":   {Roles: map[string]struct{}{}, Categories: map[string]struct{}{}, TextTokens: map[string]struct{}{}, IPHints: map[string]struct{}{}},
 	}
 
-	result := runNodeCountry(entities, attrs, xmlDocs)
+	result := runNodeCountry(entities, attrs, xmlDocs, nil)
 
 	idpAttrs := result["https://idp.example.org/idp"]
 	if _, ok := idpAttrs.TextTokens["country:se"]; !ok {
@@ -54,7 +54,7 @@ func TestNodeCountryAddsCountryTokens(t *testing.T) {
 func TestExtractCertsFromEntityXML(t *testing.T) {
 	// Use just the IdP portion from the combined fixture;
 	// extractCertsFromEntityXML scans for X509Certificate elements regardless.
-	certs, err := extractCertsFromEntityXML(p2EnrichmentXML)
+	certs, err := extractCertsFromEntityXML(p2EnrichmentXML, nil)
 	if err != nil {
 		t.Fatalf("extractCertsFromEntityXML returned error: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestCertReportRunsWithoutError(t *testing.T) {
 		"https://idp.example.org/idp": p2EnrichmentXML,
 	}
 	// runCertReport prints to stdout; just verify it doesn't panic.
-	runCertReport(entities, xmlDocs)
+	runCertReport(entities, xmlDocs, nil)
 }
 
 // TestDiscoJSONWritesOutputFile verifies that runDiscoJSON produces a JSON file

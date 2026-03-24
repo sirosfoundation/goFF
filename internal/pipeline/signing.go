@@ -13,10 +13,12 @@ import (
 
 	"github.com/beevik/etree"
 
+	"github.com/sirosfoundation/go-cryptoutil"
+
 	xmldsig "github.com/russellhaering/goxmldsig"
 )
 
-func signXMLDocument(xmlData []byte, cfg SignStep) ([]byte, error) {
+func signXMLDocument(xmlData []byte, cfg SignStep, ext *cryptoutil.Extensions) ([]byte, error) {
 	km, err := loadKeyMaterialForSign(cfg)
 	if err != nil {
 		return nil, err
@@ -116,8 +118,8 @@ func loadKeyMaterialForSign(cfg SignStep) (*vcpki.KeyMaterial, error) {
 // configured in cfg.  Both cfg.Cert (single path) and cfg.Certs (list of paths)
 // are accepted; all listed certs are added to the trust store so key-rollover
 // pipelines can verify signatures from either cert.
-func verifyXMLDocument(xmlData []byte, cfg VerifyStep) error {
-	certs, err := loadVerifyCerts(cfg)
+func verifyXMLDocument(xmlData []byte, cfg VerifyStep, ext *cryptoutil.Extensions) error {
+	certs, err := loadVerifyCerts(cfg, ext)
 	if err != nil {
 		return err
 	}
@@ -150,6 +152,7 @@ func verifyXMLDocument(xmlData []byte, cfg VerifyStep) error {
 	ctx := xmldsig.NewDefaultValidationContext(&xmldsig.MemoryX509CertificateStore{
 		Roots: certs,
 	})
+	ctx.CryptoExtensions = ext
 
 	if _, err := ctx.Validate(doc.Root()); err != nil {
 		return fmt.Errorf("verify xml signature: %w", err)
@@ -159,7 +162,7 @@ func verifyXMLDocument(xmlData []byte, cfg VerifyStep) error {
 }
 
 // loadVerifyCerts loads all certificates referenced by cfg.Cert and cfg.Certs.
-func loadVerifyCerts(cfg VerifyStep) ([]*x509.Certificate, error) {
+func loadVerifyCerts(cfg VerifyStep, ext *cryptoutil.Extensions) ([]*x509.Certificate, error) {
 	paths := make([]string, 0, 1+len(cfg.Certs))
 	if strings.TrimSpace(cfg.Cert) != "" {
 		paths = append(paths, cfg.Cert)
@@ -171,7 +174,7 @@ func loadVerifyCerts(cfg VerifyStep) ([]*x509.Certificate, error) {
 	}
 	certs := make([]*x509.Certificate, 0, len(paths))
 	for _, path := range paths {
-		cert, err := loadCertificateFromPEMFile(path)
+		cert, err := loadCertificateFromPEMFile(path, ext)
 		if err != nil {
 			return nil, err
 		}
@@ -180,7 +183,7 @@ func loadVerifyCerts(cfg VerifyStep) ([]*x509.Certificate, error) {
 	return certs, nil
 }
 
-func loadCertificateFromPEMFile(path string) (*x509.Certificate, error) {
+func loadCertificateFromPEMFile(path string, ext *cryptoutil.Extensions) (*x509.Certificate, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read verify cert file: %w", err)
@@ -189,6 +192,10 @@ func loadCertificateFromPEMFile(path string) (*x509.Certificate, error) {
 	block, _ := pem.Decode(b)
 	if block == nil || block.Type != "CERTIFICATE" {
 		return nil, fmt.Errorf("decode verify cert pem")
+	}
+
+	if ext != nil {
+		return ext.ParseCertificate(block.Bytes)
 	}
 
 	cert, err := x509.ParseCertificate(block.Bytes)

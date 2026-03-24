@@ -378,7 +378,7 @@ func verifySourceIfConfigured(src Source, xmlBody []byte) error {
 	if err, ok := tryVerifyBodyHash(xmlBody, spec); ok {
 		return err
 	}
-	return verifyXMLDocument(xmlBody, VerifyStep{Cert: spec})
+	return verifyXMLDocument(xmlBody, VerifyStep{Cert: spec}, nil)
 }
 
 // parseURLFingerprint splits a pyFF-style "https://url|sha256:hexhash" URL into

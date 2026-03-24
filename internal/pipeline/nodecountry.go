@@ -3,12 +3,14 @@ package pipeline
 import (
 	"fmt"
 	"strings"
+
+	"github.com/sirosfoundation/go-cryptoutil"
 )
 
 // runNodeCountry enriches each entity's attributes with a country:<CC> text
 // token derived from the Subject.Country fields of X.509 certificates embedded
 // in the entity's SAML metadata.
-func runNodeCountry(current []string, attrs map[string]EntityAttributes, xmlDocs map[string]string) map[string]EntityAttributes {
+func runNodeCountry(current []string, attrs map[string]EntityAttributes, xmlDocs map[string]string, ext *cryptoutil.Extensions) map[string]EntityAttributes {
 	result := make(map[string]EntityAttributes, len(attrs))
 	for k, v := range attrs {
 		result[k] = v.Clone()
@@ -19,7 +21,7 @@ func runNodeCountry(current []string, attrs map[string]EntityAttributes, xmlDocs
 		if !ok || strings.TrimSpace(xmlBody) == "" {
 			continue
 		}
-		certs, err := extractCertsFromEntityXML(xmlBody)
+		certs, err := extractCertsFromEntityXML(xmlBody, ext)
 		if err != nil {
 			continue
 		}

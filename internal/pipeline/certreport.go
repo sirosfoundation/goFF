@@ -8,18 +8,20 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"github.com/sirosfoundation/go-cryptoutil"
 )
 
 // runCertReport prints certificate validity information from each entity's
 // embedded X.509 certificates to stdout.
-func runCertReport(current []string, xmlDocs map[string]string) {
+func runCertReport(current []string, xmlDocs map[string]string, ext *cryptoutil.Extensions) {
 	now := time.Now()
 	for _, entityID := range current {
 		xmlBody, ok := xmlDocs[entityID]
 		if !ok || strings.TrimSpace(xmlBody) == "" {
 			continue
 		}
-		certs, err := extractCertsFromEntityXML(xmlBody)
+		certs, err := extractCertsFromEntityXML(xmlBody, ext)
 		if err != nil || len(certs) == 0 {
 			continue
 		}
@@ -46,7 +48,7 @@ func runCertReport(current []string, xmlDocs map[string]string) {
 
 // extractCertsFromEntityXML parses ds:X509Certificate elements from entity XML
 // and returns the decoded x509.Certificate objects.
-func extractCertsFromEntityXML(xmlBody string) ([]*x509.Certificate, error) {
+func extractCertsFromEntityXML(xmlBody string, ext *cryptoutil.Extensions) ([]*x509.Certificate, error) {
 	dec := xml.NewDecoder(strings.NewReader(xmlBody))
 	var certs []*x509.Certificate
 
@@ -75,7 +77,12 @@ func extractCertsFromEntityXML(xmlBody string) ([]*x509.Certificate, error) {
 		if err != nil {
 			continue
 		}
-		cert, err := x509.ParseCertificate(certBytes)
+		var cert *x509.Certificate
+		if ext != nil {
+			cert, err = ext.ParseCertificate(certBytes)
+		} else {
+			cert, err = x509.ParseCertificate(certBytes)
+		}
 		if err != nil {
 			continue
 		}

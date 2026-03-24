@@ -14,6 +14,7 @@ import (
 
 	"github.com/antchfx/xmlquery"
 	"github.com/antchfx/xpath"
+	"github.com/sirosfoundation/go-cryptoutil"
 )
 
 // Result contains final in-memory entities after execution.
@@ -41,6 +42,9 @@ type ExecuteOptions struct {
 	// execution mode.  Set explicitly when invoking the pipeline in a
 	// non-update mode (e.g. via-runs use {viaLabel: true}).
 	States map[string]bool
+	// CryptoExt provides extended algorithm and certificate support
+	// (e.g. brainpool curves).
+	CryptoExt *cryptoutil.Extensions
 }
 
 // errBreak is a sentinel returned by executeSteps when a `break` or `end` step
@@ -175,7 +179,7 @@ func executeSteps(
 		case "verify":
 			verifyCfg = step.Verify
 		case "publish":
-			if err := runPublish(step.Publish, outputDir, current, currentXML, finalizeCfg, signCfg, verifyCfg, publishFirst); err != nil {
+			if err := runPublish(step.Publish, outputDir, current, currentXML, finalizeCfg, signCfg, verifyCfg, publishFirst, opts.CryptoExt); err != nil {
 				return Result{}, fmt.Errorf("step %d publish: %w", i, err)
 			}
 		case "stats":
@@ -187,10 +191,10 @@ func executeSteps(
 		case "dump", "print":
 			runDump(current)
 		case "nodecountry":
-			currentAttrs = runNodeCountry(current, currentAttrs, currentXML)
+			currentAttrs = runNodeCountry(current, currentAttrs, currentXML, opts.CryptoExt)
 			syncCurrentAttrsToSources(current, currentAttrs, sourceAttrs)
 		case "certreport":
-			runCertReport(current, currentXML)
+			runCertReport(current, currentXML, opts.CryptoExt)
 		case "discojson":
 			entries := BuildDiscoEntries(current, currentAttrs, currentXML, "")
 			discoJSONCfg = entries
@@ -353,7 +357,7 @@ func executeSteps(
 			// pyFF store: directory: — equivalent to publish:{dir:} (GAP-13).
 			if step.Store.Directory != "" {
 				pub := PublishStep{Dir: step.Store.Directory}
-				if err := runPublish(pub, outputDir, current, currentXML, finalizeCfg, signCfg, verifyCfg, publishFirst); err != nil {
+				if err := runPublish(pub, outputDir, current, currentXML, finalizeCfg, signCfg, verifyCfg, publishFirst, opts.CryptoExt); err != nil {
 					return Result{}, fmt.Errorf("step %d store: %w", i, err)
 				}
 			}
@@ -1495,7 +1499,7 @@ func resolveSourcePaths(src Source, baseDir string) Source {
 	return src
 }
 
-func runPublish(cfg PublishStep, outputDir string, current []string, currentXML map[string]string, fin FinalizeStep, signCfg SignStep, verifyCfg VerifyStep, first bool) error {
+func runPublish(cfg PublishStep, outputDir string, current []string, currentXML map[string]string, fin FinalizeStep, signCfg SignStep, verifyCfg VerifyStep, first bool, ext *cryptoutil.Extensions) error {
 	if cfg.Dir != "" {
 		return runPublishDir(cfg, outputDir, current, currentXML)
 	}
@@ -1524,7 +1528,7 @@ func runPublish(cfg PublishStep, outputDir string, current []string, currentXML 
 		// crypto annotation, matching pyFF's raw-publish semantics.
 		body = BuildEntitiesXML(current, currentXML, AggregateConfig{})
 	} else {
-		body, err = formatOutput(path, current, currentXML, fin, signCfg, verifyCfg, first)
+		body, err = formatOutput(path, current, currentXML, fin, signCfg, verifyCfg, first, ext)
 		if err != nil {
 			return err
 		}
@@ -1651,7 +1655,7 @@ func runPublishDir(cfg PublishStep, outputDir string, current []string, currentX
 	return nil
 }
 
-func formatOutput(path string, current []string, currentXML map[string]string, fin FinalizeStep, signCfg SignStep, verifyCfg VerifyStep, first bool) ([]byte, error) {
+func formatOutput(path string, current []string, currentXML map[string]string, fin FinalizeStep, signCfg SignStep, verifyCfg VerifyStep, first bool, ext *cryptoutil.Extensions) ([]byte, error) {
 	hasSign := signCfg.Key != "" || signCfg.Cert != "" || signCfg.PKCS11 != nil
 	hasVerify := verifyCfg.Cert != "" || len(verifyCfg.Certs) > 0
 
@@ -1679,14 +1683,14 @@ func formatOutput(path string, current []string, currentXML map[string]string, f
 				return nil, fmt.Errorf("sign requires either key or pkcs11 configuration")
 			}
 			var err error
-			b, err = signXMLDocument(b, signCfg)
+			b, err = signXMLDocument(b, signCfg, ext)
 			if err != nil {
 				return nil, err
 			}
 		}
 
 		if hasVerify {
-			if err := verifyXMLDocument(b, verifyCfg); err != nil {
+			if err := verifyXMLDocument(b, verifyCfg, ext); err != nil {
 				return nil, err
 			}
 		}

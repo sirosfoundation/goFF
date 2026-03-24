@@ -122,7 +122,7 @@ func TestLoadSourceDataVerifyPassesForSignedSource(t *testing.T) {
   </md:EntityDescriptor>
 </md:EntitiesDescriptor>`
 
-	signed, err := signXMLDocument([]byte(unsigned), SignStep{Key: keyFile, Cert: certFile})
+	signed, err := signXMLDocument([]byte(unsigned), SignStep{Key: keyFile, Cert: certFile}, nil)
 	if err != nil {
 		t.Fatalf("failed signing metadata fixture: %v", err)
 	}
