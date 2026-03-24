@@ -555,5 +555,3 @@ func TestEntityLookupJSONWithDynamicRendererFunc(t *testing.T) {
 		t.Fatalf("expected application/disco+json after hot-swap, got %q", rr.Header().Get("Content-Type"))
 	}
 }
-
-
