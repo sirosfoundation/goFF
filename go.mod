@@ -4,7 +4,7 @@ go 1.25.1
 
 require (
 	github.com/antchfx/xmlquery v1.5.0
-	github.com/antchfx/xpath v1.3.5
+	github.com/antchfx/xpath v1.3.6
 	github.com/beevik/etree v1.6.0
 	github.com/russellhaering/goxmldsig v1.5.0
 	github.com/sirosfoundation/go-cryptoutil v0.3.0
