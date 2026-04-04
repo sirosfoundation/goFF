@@ -35,6 +35,15 @@ jobs:
           echo "Total coverage: ${TOTAL}%"
           awk "BEGIN { if (${TOTAL} < 70.0) { print \"Coverage ${TOTAL}% is below 70% gate\"; exit 1 } }"
 
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./cover.out
+          flags: unittests
+          name: codecov-goFF
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
       - name: Fuzz smoke (30 s per target)
         run: |
           go test -run '^$$' -fuzz FuzzParseMetadataFromXML -fuzztime 30s ./internal/pipeline

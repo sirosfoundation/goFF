@@ -5,10 +5,11 @@
 [![CI](https://github.com/sirosfoundation/goFF/actions/workflows/ci.yml/badge.svg)](https://github.com/sirosfoundation/goFF/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/sirosfoundation/goff.svg)](https://pkg.go.dev/github.com/sirosfoundation/goff)
 [![Go Report Card](https://goreportcard.com/badge/github.com/sirosfoundation/goff)](https://goreportcard.com/report/github.com/sirosfoundation/goff)
+[![codecov](https://codecov.io/gh/sirosfoundation/goFF/branch/main/graph/badge.svg)](https://codecov.io/gh/sirosfoundation/goFF)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/sirosfoundation/goFF)](https://go.dev/)
 [![Issues](https://img.shields.io/github/issues/sirosfoundation/goFF)](https://github.com/sirosfoundation/goFF/issues)
-[![License](https://img.shields.io/badge/License-BSD_2--Clause-orange.svg)](LICENSE)
 [![GHCR](https://img.shields.io/badge/ghcr.io-sirosfoundation%2Fgoff-blue)](https://ghcr.io/sirosfoundation/goff)
+[![License](https://img.shields.io/badge/License-BSD_2--Clause-orange.svg)](LICENSE)
 
 </div>
 
