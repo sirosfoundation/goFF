@@ -66,7 +66,7 @@ func extractCertsFromEntityXML(xmlBody string, ext *cryptoutil.Extensions) ([]*x
 			continue
 		}
 		var certB64 string
-		if err := dec.DecodeElement(&certB64, &x); err != nil {
+		if derr := dec.DecodeElement(&certB64, &x); derr != nil {
 			continue
 		}
 		// Strip whitespace before base64 decoding.

@@ -493,11 +493,6 @@ func setCacheHeaders(w http.ResponseWriter, ac pipeline.AggregateConfig) {
 	}
 }
 
-type xmlGetter interface {
-	List() []string
-	Get(entityID string) (string, bool)
-}
-
 // wantsPrometheus returns true if the Accept header indicates the client can
 // accept Prometheus text exposition format.
 func wantsPrometheus(accept string) bool {
@@ -520,38 +515,39 @@ func writePrometheusCounters(w http.ResponseWriter, rc *RequestCounters, extra m
 		{"entities_list", rc.EntitiesListRequests.Load()},
 		{"entity_lookup", rc.EntityLookupRequests.Load()},
 	}
-	fmt.Fprintf(w, "# HELP goff_requests_total Total HTTP requests by endpoint.\n")
-	fmt.Fprintf(w, "# TYPE goff_requests_total counter\n")
+	pw := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
+	pw("# HELP goff_requests_total Total HTTP requests by endpoint.\n")
+	pw("# TYPE goff_requests_total counter\n")
 	for _, c := range counters {
-		fmt.Fprintf(w, "goff_requests_total{endpoint=%q} %d\n", c.endpoint, c.value)
+		pw("goff_requests_total{endpoint=%q} %d\n", c.endpoint, c.value)
 	}
-	fmt.Fprintf(w, "# HELP goff_http_errors_total HTTP error responses by status code.\n")
-	fmt.Fprintf(w, "# TYPE goff_http_errors_total counter\n")
-	fmt.Fprintf(w, "goff_http_errors_total{code=\"404\"} %d\n", rc.EntityLookupNotFound.Load())
-	fmt.Fprintf(w, "goff_http_errors_total{code=\"400\"} %d\n", rc.EntityLookupBadInput.Load())
-	fmt.Fprintf(w, "goff_http_errors_total{code=\"406\"} %d\n", rc.EntityLookupNotAccept.Load()+rc.EntityListNotAccept.Load())
+	pw("# HELP goff_http_errors_total HTTP error responses by status code.\n")
+	pw("# TYPE goff_http_errors_total counter\n")
+	pw("goff_http_errors_total{code=\"404\"} %d\n", rc.EntityLookupNotFound.Load())
+	pw("goff_http_errors_total{code=\"400\"} %d\n", rc.EntityLookupBadInput.Load())
+	pw("goff_http_errors_total{code=\"406\"} %d\n", rc.EntityLookupNotAccept.Load()+rc.EntityListNotAccept.Load())
 
 	// Expose extra metrics (refresh, entity_count) as gauges.
 	if refresh, ok := extra["refresh"].(map[string]any); ok {
 		if v, ok := refresh["entity_count"]; ok {
-			fmt.Fprintf(w, "# HELP goff_entity_count Number of entities in the current repository.\n")
-			fmt.Fprintf(w, "# TYPE goff_entity_count gauge\n")
-			fmt.Fprintf(w, "goff_entity_count %v\n", v)
+			pw("# HELP goff_entity_count Number of entities in the current repository.\n")
+			pw("# TYPE goff_entity_count gauge\n")
+			pw("goff_entity_count %v\n", v)
 		}
 		if v, ok := refresh["success_total"]; ok {
-			fmt.Fprintf(w, "# HELP goff_refresh_success_total Total successful pipeline refresh runs.\n")
-			fmt.Fprintf(w, "# TYPE goff_refresh_success_total counter\n")
-			fmt.Fprintf(w, "goff_refresh_success_total %v\n", v)
+			pw("# HELP goff_refresh_success_total Total successful pipeline refresh runs.\n")
+			pw("# TYPE goff_refresh_success_total counter\n")
+			pw("goff_refresh_success_total %v\n", v)
 		}
 		if v, ok := refresh["failure_total"]; ok {
-			fmt.Fprintf(w, "# HELP goff_refresh_failure_total Total failed pipeline refresh runs.\n")
-			fmt.Fprintf(w, "# TYPE goff_refresh_failure_total counter\n")
-			fmt.Fprintf(w, "goff_refresh_failure_total %v\n", v)
+			pw("# HELP goff_refresh_failure_total Total failed pipeline refresh runs.\n")
+			pw("# TYPE goff_refresh_failure_total counter\n")
+			pw("goff_refresh_failure_total %v\n", v)
 		}
 		if v, ok := refresh["stale_since_unix"]; ok {
-			fmt.Fprintf(w, "# HELP goff_stale_since_unix Unix timestamp of first consecutive refresh failure (0 = healthy).\n")
-			fmt.Fprintf(w, "# TYPE goff_stale_since_unix gauge\n")
-			fmt.Fprintf(w, "goff_stale_since_unix %v\n", v)
+			pw("# HELP goff_stale_since_unix Unix timestamp of first consecutive refresh failure (0 = healthy).\n")
+			pw("# TYPE goff_stale_since_unix gauge\n")
+			pw("goff_stale_since_unix %v\n", v)
 		}
 	}
 }

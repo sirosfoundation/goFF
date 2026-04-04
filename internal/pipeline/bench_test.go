@@ -68,7 +68,7 @@ func benchmarkMetadataXML(entityCount int) string {
 
 	for i := 0; i < entityCount; i++ {
 		entityID := fmt.Sprintf("https://entity-%05d.example.org/%s", i, roleSuffix(i))
-		sb.WriteString(fmt.Sprintf(`  <md:EntityDescriptor entityID="%s">`, entityID))
+		fmt.Fprintf(&sb, `  <md:EntityDescriptor entityID="%s">`, entityID)
 		sb.WriteString("\n")
 		if i%2 == 0 {
 			sb.WriteString("    <md:IDPSSODescriptor/>\n")

@@ -1681,7 +1681,7 @@ func testMetadataXML(entityIDs ...string) string {
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
 	b.WriteString(`<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata">`)
 	for _, id := range entityIDs {
-		b.WriteString(fmt.Sprintf(`<md:EntityDescriptor entityID=%q/>`, id))
+		fmt.Fprintf(&b, `<md:EntityDescriptor entityID=%q/>`, id)
 	}
 	b.WriteString(`</md:EntitiesDescriptor>`)
 	return b.String()
@@ -2371,7 +2371,7 @@ func TestExecuteLoadSourceEntryURLWithAlias(t *testing.T) {
 func TestExecuteLoadViaRunsBranchOnSource(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/samlmetadata+xml")
-		fmt.Fprint(w, `<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata">
+		_, _ = fmt.Fprint(w, `<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata">
   <EntityDescriptor entityID="https://idp.example.org/via-test">
     <IDPSSODescriptor><SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.org/sso"/></IDPSSODescriptor>
   </EntityDescriptor>
@@ -2435,7 +2435,7 @@ func TestExecuteLoadViaRunsBranchOnSource(t *testing.T) {
 func TestExecuteLoadViaUnknownLabelPassesThrough(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/samlmetadata+xml")
-		fmt.Fprint(w, `<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata">
+		_, _ = fmt.Fprint(w, `<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata">
   <EntityDescriptor entityID="https://idp.example.org/x">
     <IDPSSODescriptor><SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.org/sso"/></IDPSSODescriptor>
   </EntityDescriptor>

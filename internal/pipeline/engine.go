@@ -271,7 +271,6 @@ func executeSteps(
 				if sub.DiscoJSON != nil {
 					discoJSONCfg = sub.DiscoJSON
 				}
-				publishFirst = false
 				if err == errBreak {
 					// break inside a when body stops the outer pipeline too,
 					// matching pyFF's req.done propagation.
@@ -1668,11 +1667,7 @@ func formatOutput(path string, current []string, currentXML map[string]string, f
 				return nil, err
 			}
 		} else {
-			b = BuildEntitiesXML(current, currentXML, AggregateConfig{
-				Name:          fin.Name,
-				CacheDuration: fin.CacheDuration,
-				ValidUntil:    fin.ValidUntil,
-			})
+			b = BuildEntitiesXML(current, currentXML, AggregateConfig(fin))
 		}
 
 		if hasSign {

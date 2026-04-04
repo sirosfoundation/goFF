@@ -48,7 +48,7 @@ func TestRunServerServesHealthz(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed calling /metrics: %v", err)
 	}
-	defer metricsResp.Body.Close()
+	defer func() { _ = metricsResp.Body.Close() }()
 	if metricsResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected /metrics 200, got %d", metricsResp.StatusCode)
 	}

@@ -39,7 +39,7 @@ func signXMLDocument(xmlData []byte, cfg SignStep, ext *cryptoutil.Extensions) (
 	ctx.Canonicalizer = xmldsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList("")
 
 	doc := etree.NewDocument()
-	if err := doc.ReadFromBytes(xmlData); err != nil {
+	if err = doc.ReadFromBytes(xmlData); err != nil {
 		return nil, fmt.Errorf("parse xml for signing: %w", err)
 	}
 

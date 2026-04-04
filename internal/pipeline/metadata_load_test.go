@@ -128,7 +128,7 @@ func TestLoadSourceDataVerifyPassesForSignedSource(t *testing.T) {
 	}
 
 	metadataPath := filepath.Join(t.TempDir(), "metadata-signed.xml")
-	if err := os.WriteFile(metadataPath, signed, 0o600); err != nil {
+	if err = os.WriteFile(metadataPath, signed, 0o600); err != nil {
 		t.Fatalf("failed writing signed metadata fixture: %v", err)
 	}
 

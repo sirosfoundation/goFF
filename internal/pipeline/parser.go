@@ -19,7 +19,7 @@ func ParseFile(path string) (File, error) {
 	}
 
 	var root yaml.Node
-	if err := yaml.Unmarshal(b, &root); err != nil {
+	if err = yaml.Unmarshal(b, &root); err != nil {
 		return File{}, fmt.Errorf("parse pipeline yaml: %w", err)
 	}
 
