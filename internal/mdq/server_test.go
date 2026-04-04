@@ -645,9 +645,9 @@ func TestMetricsPrometheus(t *testing.T) {
 		WithExtraMetrics(func() map[string]any {
 			return map[string]any{
 				"refresh": map[string]any{
-					"entity_count":    42,
-					"success_total":   10,
-					"failure_total":   2,
+					"entity_count":     42,
+					"success_total":    10,
+					"failure_total":    2,
 					"stale_since_unix": 0,
 				},
 			}

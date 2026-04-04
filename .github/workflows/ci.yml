@@ -20,13 +20,10 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Verify formatting
-        run: |
-          if [ -n "$(gofmt -l .)" ]; then
-            echo "Unformatted files found"
-            gofmt -l .
-            exit 1
-          fi
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.10.0
 
       - name: Test
         run: go test -race ./...

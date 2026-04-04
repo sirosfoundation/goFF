@@ -5,6 +5,15 @@ run:
   modules-download-mode: readonly
   tests: true
 
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/sirosfoundation/goff
+
 linters:
   enable:
     - errcheck
@@ -12,17 +21,12 @@ linters:
     - ineffassign
     - staticcheck
     - unused
-    - gofmt
-    - goimports
     - misspell
-
-linters-settings:
-  govet:
-    enable-all: true
-    disable:
-      - fieldalignment
-  goimports:
-    local-prefixes: github.com/sirosfoundation/goff
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
 
 issues:
   max-issues-per-linter: 0
