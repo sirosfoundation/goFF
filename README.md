@@ -9,6 +9,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/sirosfoundation/goFF?include_prereleases)](https://github.com/sirosfoundation/goFF/releases)
 [![Issues](https://img.shields.io/github/issues/sirosfoundation/goFF)](https://github.com/sirosfoundation/goFF/issues)
 [![License](https://img.shields.io/badge/License-BSD_2--Clause-orange.svg)](LICENSE)
+[![GHCR](https://img.shields.io/badge/ghcr.io-sirosfoundation%2Fgoff-blue)](https://ghcr.io/sirosfoundation/goff)
 
 </div>
 
