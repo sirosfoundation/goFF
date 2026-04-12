@@ -3,11 +3,11 @@ module github.com/sirosfoundation/goff
 go 1.26
 
 require (
-	github.com/antchfx/xmlquery v1.5.0
+	github.com/antchfx/xmlquery v1.5.1
 	github.com/antchfx/xpath v1.3.6
 	github.com/beevik/etree v1.6.0
 	github.com/russellhaering/goxmldsig v1.5.0
-	github.com/sirosfoundation/go-cryptoutil v0.3.0
+	github.com/sirosfoundation/go-cryptoutil v0.5.0
 	gopkg.in/yaml.v3 v3.0.1
 	vc v0.4.0
 )
