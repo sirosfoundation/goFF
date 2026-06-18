@@ -1,6 +1,6 @@
 module github.com/sirosfoundation/goff
 
-go 1.26
+go 1.26.4
 
 require (
 	github.com/antchfx/xmlquery v1.5.1
