@@ -108,7 +108,7 @@ func loadKeyMaterialForSign(cfg SignStep) (*signKeyMaterial, error) {
 
 		s, err := pkcs11pool.NewSigner(pool, sel)
 		if err != nil {
-			pool.Close()
+			_ = pool.Close()
 			return nil, fmt.Errorf("pkcs11 signer: %w", err)
 		}
 		signer = s
