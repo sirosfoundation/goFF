@@ -9,14 +9,19 @@ import (
 	"strings"
 	"time"
 
-	vcpki "vc/pkg/pki"
-
 	"github.com/beevik/etree"
 
 	"github.com/sirosfoundation/go-cryptoutil"
+	"github.com/sirosfoundation/go-cryptoutil/pkcs11pool"
 
 	xmldsig "github.com/russellhaering/goxmldsig"
 )
+
+// signKeyMaterial holds a loaded signing key and certificate (replaces vcpki.KeyMaterial).
+type signKeyMaterial struct {
+	PrivateKey crypto.Signer
+	Cert       *x509.Certificate
+}
 
 func signXMLDocument(xmlData []byte, cfg SignStep, ext *cryptoutil.Extensions) ([]byte, error) {
 	km, err := loadKeyMaterialForSign(cfg)
@@ -24,15 +29,11 @@ func signXMLDocument(xmlData []byte, cfg SignStep, ext *cryptoutil.Extensions) (
 		return nil, err
 	}
 
-	signer, ok := km.PrivateKey.(crypto.Signer)
-	if !ok {
-		return nil, fmt.Errorf("private key does not implement crypto.Signer")
-	}
 	if km.Cert == nil {
 		return nil, fmt.Errorf("no signing certificate available")
 	}
 
-	ctx, err := xmldsig.NewSigningContext(signer, [][]byte{km.Cert.Raw})
+	ctx, err := xmldsig.NewSigningContext(km.PrivateKey, [][]byte{km.Cert.Raw})
 	if err != nil {
 		return nil, fmt.Errorf("create signing context: %w", err)
 	}
@@ -80,38 +81,93 @@ func resolveHSMPIN(cfg *PKCS11SignSettings) (string, error) {
 	return cfg.PIN, nil
 }
 
-func loadKeyMaterialForSign(cfg SignStep) (*vcpki.KeyMaterial, error) {
-	keyCfg := &vcpki.KeyConfig{
-		PrivateKeyPath: cfg.Key,
-		ChainPath:      cfg.Cert,
-	}
+func loadKeyMaterialForSign(cfg SignStep) (*signKeyMaterial, error) {
+	var signer crypto.Signer
 
 	if cfg.PKCS11 != nil {
 		pin, err := resolveHSMPIN(cfg.PKCS11)
 		if err != nil {
 			return nil, err
 		}
-		keyCfg.PKCS11 = &vcpki.PKCS11Config{
+
+		sel := pkcs11pool.KeyByLabel(cfg.PKCS11.KeyLabel)
+		if cfg.PKCS11.KeyID != "" {
+			sel = pkcs11pool.KeyByID([]byte(cfg.PKCS11.KeyID))
+		}
+
+		pool, err := pkcs11pool.New(pkcs11pool.Config{
 			ModulePath: cfg.PKCS11.ModulePath,
 			SlotID:     cfg.PKCS11.SlotID,
 			PIN:        pin,
-			KeyLabel:   cfg.PKCS11.KeyLabel,
-			KeyID:      cfg.PKCS11.KeyID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("pkcs11 pool: %w", err)
 		}
-		keyCfg.EnableHSM = true
-		if cfg.Key != "" {
-			keyCfg.EnableFile = true
-			keyCfg.Priority = []vcpki.KeySource{vcpki.KeySourceHSM, vcpki.KeySourceFile}
+		// Note: pool is not closed here because the signer holds a reference.
+		// The signer is used for the lifetime of the signing operation.
+
+		s, err := pkcs11pool.NewSigner(pool, sel)
+		if err != nil {
+			_ = pool.Close()
+			return nil, fmt.Errorf("pkcs11 signer: %w", err)
+		}
+		signer = s
+	}
+
+	// Load file-based key if no HSM signer or as fallback.
+	if signer == nil && cfg.Key != "" {
+		keyPEM, err := os.ReadFile(cfg.Key)
+		if err != nil {
+			return nil, fmt.Errorf("read private key: %w", err)
+		}
+		block, _ := pem.Decode(keyPEM)
+		if block == nil {
+			return nil, fmt.Errorf("failed to decode PEM private key")
+		}
+		key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			// Try EC-specific format.
+			key2, err2 := x509.ParseECPrivateKey(block.Bytes)
+			if err2 != nil {
+				// Try RSA PKCS#1 format.
+				key3, err3 := x509.ParsePKCS1PrivateKey(block.Bytes)
+				if err3 != nil {
+					return nil, fmt.Errorf("parse private key: %w", err)
+				}
+				key = key3
+			} else {
+				key = key2
+			}
+		}
+		s, ok := key.(crypto.Signer)
+		if !ok {
+			return nil, fmt.Errorf("private key does not implement crypto.Signer")
+		}
+		signer = s
+	}
+
+	if signer == nil {
+		return nil, fmt.Errorf("no signing key configured (set key or pkcs11)")
+	}
+
+	// Load certificate.
+	var cert *x509.Certificate
+	if cfg.Cert != "" {
+		certPEM, err := os.ReadFile(cfg.Cert)
+		if err != nil {
+			return nil, fmt.Errorf("read certificate: %w", err)
+		}
+		block, _ := pem.Decode(certPEM)
+		if block == nil {
+			return nil, fmt.Errorf("failed to decode PEM certificate")
+		}
+		cert, err = x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse certificate: %w", err)
 		}
 	}
 
-	loader := vcpki.NewKeyLoader()
-	km, err := loader.LoadKeyMaterial(keyCfg)
-	if err != nil {
-		return nil, fmt.Errorf("load signing key material: %w", err)
-	}
-
-	return km, nil
+	return &signKeyMaterial{PrivateKey: signer, Cert: cert}, nil
 }
 
 // verifyXMLDocument verifies an enveloped XML signature against the certificates

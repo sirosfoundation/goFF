@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -182,4 +183,246 @@ func writeTestCert(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return f
+}
+
+// ─── loadKeyMaterialForSign tests ────────────────────────────────────────────
+
+func writeECKeyPKCS8(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemData := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+	f := filepath.Join(t.TempDir(), "key.pem")
+	if err := os.WriteFile(f, pemData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func writeECKeyRaw(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemData := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
+	f := filepath.Join(t.TempDir(), "ec-key.pem")
+	if err := os.WriteFile(f, pemData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func TestLoadKeyMaterialForSignPKCS8EC(t *testing.T) {
+	keyFile := writeECKeyPKCS8(t)
+	certFile := writeTestCert(t)
+	km, err := loadKeyMaterialForSign(SignStep{Key: keyFile, Cert: certFile})
+	if err != nil {
+		t.Fatalf("loadKeyMaterialForSign PKCS8 EC: %v", err)
+	}
+	if km.PrivateKey == nil {
+		t.Error("expected non-nil PrivateKey")
+	}
+	if km.Cert == nil {
+		t.Error("expected non-nil Cert")
+	}
+}
+
+func TestLoadKeyMaterialForSignECRaw(t *testing.T) {
+	keyFile := writeECKeyRaw(t)
+	km, err := loadKeyMaterialForSign(SignStep{Key: keyFile})
+	if err != nil {
+		t.Fatalf("loadKeyMaterialForSign EC raw: %v", err)
+	}
+	if km.PrivateKey == nil {
+		t.Error("expected non-nil PrivateKey")
+	}
+}
+
+func TestLoadKeyMaterialForSignNoKey(t *testing.T) {
+	_, err := loadKeyMaterialForSign(SignStep{})
+	if err == nil {
+		t.Error("expected error when no key configured")
+	}
+}
+
+func TestLoadKeyMaterialForSignKeyNotFound(t *testing.T) {
+	_, err := loadKeyMaterialForSign(SignStep{Key: "/nonexistent/key.pem"})
+	if err == nil {
+		t.Error("expected error for missing key file")
+	}
+}
+
+func TestLoadKeyMaterialForSignInvalidPEM(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "bad.pem")
+	if err := os.WriteFile(f, []byte("not pem content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadKeyMaterialForSign(SignStep{Key: f})
+	if err == nil {
+		t.Error("expected error for invalid PEM")
+	}
+}
+
+func TestLoadKeyMaterialForSignCertNotFound(t *testing.T) {
+	keyFile := writeECKeyPKCS8(t)
+	_, err := loadKeyMaterialForSign(SignStep{Key: keyFile, Cert: "/nonexistent/cert.pem"})
+	if err == nil {
+		t.Error("expected error for missing cert file")
+	}
+}
+
+func TestLoadKeyMaterialForSignInvalidCertPEM(t *testing.T) {
+	keyFile := writeECKeyPKCS8(t)
+	f := filepath.Join(t.TempDir(), "bad-cert.pem")
+	if err := os.WriteFile(f, []byte("not a cert"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadKeyMaterialForSign(SignStep{Key: keyFile, Cert: f})
+	if err == nil {
+		t.Error("expected error for invalid cert PEM")
+	}
+}
+
+func writeRSAKeyPKCS1(t *testing.T) string {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der := x509.MarshalPKCS1PrivateKey(key)
+	pemData := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: der})
+	f := filepath.Join(t.TempDir(), "rsa-key.pem")
+	if err := os.WriteFile(f, pemData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func TestLoadKeyMaterialForSignRSAPKCS1(t *testing.T) {
+	keyFile := writeRSAKeyPKCS1(t)
+	km, err := loadKeyMaterialForSign(SignStep{Key: keyFile})
+	if err != nil {
+		t.Fatalf("loadKeyMaterialForSign RSA PKCS1: %v", err)
+	}
+	if km.PrivateKey == nil {
+		t.Error("expected non-nil PrivateKey")
+	}
+}
+
+func TestLoadKeyMaterialForSignInvalidKeyBytes(t *testing.T) {
+	// Valid PEM envelope but garbage DER content — all three parsers fail.
+	pemData := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("not valid der")})
+	f := filepath.Join(t.TempDir(), "garbage.pem")
+	if err := os.WriteFile(f, pemData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadKeyMaterialForSign(SignStep{Key: f})
+	if err == nil {
+		t.Error("expected error for garbage key DER")
+	}
+}
+
+func TestLoadKeyMaterialForSignInvalidCertDER(t *testing.T) {
+	keyFile := writeECKeyPKCS8(t)
+	// Valid PEM but garbage DER inside.
+	pemData := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not a cert der")})
+	f := filepath.Join(t.TempDir(), "bad-cert-der.pem")
+	if err := os.WriteFile(f, pemData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadKeyMaterialForSign(SignStep{Key: keyFile, Cert: f})
+	if err == nil {
+		t.Error("expected error for invalid cert DER")
+	}
+}
+
+// ─── signXMLDocument tests ───────────────────────────────────────────────────
+
+func writeTestKeyAndCert(t *testing.T) (keyFile, certFile string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(42),
+		Subject:      pkix.Name{CommonName: "sign-test"},
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	keyFile = filepath.Join(dir, "key.pem")
+	certFile = filepath.Join(dir, "cert.pem")
+
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return
+}
+
+func TestSignXMLDocument(t *testing.T) {
+	keyFile, certFile := writeTestKeyAndCert(t)
+	cfg := SignStep{Key: keyFile, Cert: certFile}
+	xml := []byte(`<root><child>hello</child></root>`)
+	out, err := signXMLDocument(xml, cfg, nil)
+	if err != nil {
+		t.Fatalf("signXMLDocument: %v", err)
+	}
+	if len(out) == 0 {
+		t.Error("expected non-empty signed XML")
+	}
+}
+
+func TestSignXMLDocumentNoCert(t *testing.T) {
+	keyFile := writeECKeyPKCS8(t)
+	cfg := SignStep{Key: keyFile} // no cert
+	_, err := signXMLDocument([]byte(`<root/>`), cfg, nil)
+	if err == nil {
+		t.Error("expected error when no cert configured")
+	}
+}
+
+func TestSignXMLDocumentInvalidXML(t *testing.T) {
+	keyFile, certFile := writeTestKeyAndCert(t)
+	cfg := SignStep{Key: keyFile, Cert: certFile}
+	_, err := signXMLDocument([]byte("not xml at all <<<"), cfg, nil)
+	if err == nil {
+		t.Error("expected error for invalid XML")
+	}
+}
+
+func TestLoadKeyMaterialForSignPKCS11BadModule(t *testing.T) {
+	cfg := SignStep{
+		PKCS11: &PKCS11SignSettings{
+			ModulePath: "/nonexistent/pkcs11-module.so",
+			PIN:        "1234",
+			KeyLabel:   "test-key",
+		},
+	}
+	_, err := loadKeyMaterialForSign(cfg)
+	if err == nil {
+		t.Error("expected error for non-existent PKCS11 module")
+	}
 }

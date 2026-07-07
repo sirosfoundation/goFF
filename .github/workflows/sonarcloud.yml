@@ -20,6 +20,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests with coverage
+        run: go test -coverprofile=cover.out ./...
+        env:
+          CI: true
+
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@v5
         env:
@@ -28,3 +38,7 @@ jobs:
           args: >
             -Dsonar.organization=${{ github.repository_owner }}
             -Dsonar.projectKey=${{ github.repository_owner }}_${{ github.event.repository.name }}
+            -Dsonar.go.coverage.reportPaths=cover.out
+            -Dsonar.sources=.
+            -Dsonar.tests=.
+            -Dsonar.test.inclusions=**/*_test.go
