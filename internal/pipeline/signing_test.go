@@ -408,3 +408,17 @@ func TestSignXMLDocumentInvalidXML(t *testing.T) {
 		t.Error("expected error for invalid XML")
 	}
 }
+
+func TestLoadKeyMaterialForSignPKCS11BadModule(t *testing.T) {
+	cfg := SignStep{
+		PKCS11: &PKCS11SignSettings{
+			ModulePath: "/nonexistent/pkcs11-module.so",
+			PIN:        "1234",
+			KeyLabel:   "test-key",
+		},
+	}
+	_, err := loadKeyMaterialForSign(cfg)
+	if err == nil {
+		t.Error("expected error for non-existent PKCS11 module")
+	}
+}
