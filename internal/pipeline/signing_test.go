@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -290,5 +291,58 @@ func TestLoadKeyMaterialForSignInvalidCertPEM(t *testing.T) {
 	_, err := loadKeyMaterialForSign(SignStep{Key: keyFile, Cert: f})
 	if err == nil {
 		t.Error("expected error for invalid cert PEM")
+	}
+}
+
+func writeRSAKeyPKCS1(t *testing.T) string {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der := x509.MarshalPKCS1PrivateKey(key)
+	pemData := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: der})
+	f := filepath.Join(t.TempDir(), "rsa-key.pem")
+	if err := os.WriteFile(f, pemData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func TestLoadKeyMaterialForSignRSAPKCS1(t *testing.T) {
+	keyFile := writeRSAKeyPKCS1(t)
+	km, err := loadKeyMaterialForSign(SignStep{Key: keyFile})
+	if err != nil {
+		t.Fatalf("loadKeyMaterialForSign RSA PKCS1: %v", err)
+	}
+	if km.PrivateKey == nil {
+		t.Error("expected non-nil PrivateKey")
+	}
+}
+
+func TestLoadKeyMaterialForSignInvalidKeyBytes(t *testing.T) {
+	// Valid PEM envelope but garbage DER content — all three parsers fail.
+	pemData := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("not valid der")})
+	f := filepath.Join(t.TempDir(), "garbage.pem")
+	if err := os.WriteFile(f, pemData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadKeyMaterialForSign(SignStep{Key: f})
+	if err == nil {
+		t.Error("expected error for garbage key DER")
+	}
+}
+
+func TestLoadKeyMaterialForSignInvalidCertDER(t *testing.T) {
+	keyFile := writeECKeyPKCS8(t)
+	// Valid PEM but garbage DER inside.
+	pemData := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not a cert der")})
+	f := filepath.Join(t.TempDir(), "bad-cert-der.pem")
+	if err := os.WriteFile(f, pemData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadKeyMaterialForSign(SignStep{Key: keyFile, Cert: f})
+	if err == nil {
+		t.Error("expected error for invalid cert DER")
 	}
 }
