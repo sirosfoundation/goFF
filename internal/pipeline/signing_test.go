@@ -346,3 +346,65 @@ func TestLoadKeyMaterialForSignInvalidCertDER(t *testing.T) {
 		t.Error("expected error for invalid cert DER")
 	}
 }
+
+// ─── signXMLDocument tests ───────────────────────────────────────────────────
+
+func writeTestKeyAndCert(t *testing.T) (keyFile, certFile string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(42),
+		Subject:      pkix.Name{CommonName: "sign-test"},
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	keyFile = filepath.Join(dir, "key.pem")
+	certFile = filepath.Join(dir, "cert.pem")
+
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600)
+	os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}), 0o644)
+	return
+}
+
+func TestSignXMLDocument(t *testing.T) {
+	keyFile, certFile := writeTestKeyAndCert(t)
+	cfg := SignStep{Key: keyFile, Cert: certFile}
+	xml := []byte(`<root><child>hello</child></root>`)
+	out, err := signXMLDocument(xml, cfg, nil)
+	if err != nil {
+		t.Fatalf("signXMLDocument: %v", err)
+	}
+	if len(out) == 0 {
+		t.Error("expected non-empty signed XML")
+	}
+}
+
+func TestSignXMLDocumentNoCert(t *testing.T) {
+	keyFile := writeECKeyPKCS8(t)
+	cfg := SignStep{Key: keyFile} // no cert
+	_, err := signXMLDocument([]byte(`<root/>`), cfg, nil)
+	if err == nil {
+		t.Error("expected error when no cert configured")
+	}
+}
+
+func TestSignXMLDocumentInvalidXML(t *testing.T) {
+	keyFile, certFile := writeTestKeyAndCert(t)
+	cfg := SignStep{Key: keyFile, Cert: certFile}
+	_, err := signXMLDocument([]byte("not xml at all <<<"), cfg, nil)
+	if err == nil {
+		t.Error("expected error for invalid XML")
+	}
+}
