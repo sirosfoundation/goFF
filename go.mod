@@ -7,7 +7,7 @@ require (
 	github.com/antchfx/xpath v1.3.6
 	github.com/beevik/etree v1.6.0
 	github.com/russellhaering/goxmldsig v1.5.0
-	github.com/sirosfoundation/go-cryptoutil v0.5.0
+	github.com/sirosfoundation/go-cryptoutil v0.6.0
 	github.com/sirosfoundation/go-cryptoutil/pkcs11pool v0.1.0
 	gopkg.in/yaml.v3 v3.0.1
 )
