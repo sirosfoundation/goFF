@@ -8,6 +8,7 @@
 [![codecov](https://codecov.io/gh/sirosfoundation/goFF/branch/main/graph/badge.svg)](https://codecov.io/gh/sirosfoundation/goFF)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/sirosfoundation/goFF)](https://go.dev/)
 [![GHCR](https://img.shields.io/badge/ghcr.io-sirosfoundation%2Fgoff-blue)](https://ghcr.io/sirosfoundation/goff)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/sirosfoundation/goFF/badge)](https://scorecard.dev/viewer/?uri=github.com/sirosfoundation/goFF)
 [![License](https://img.shields.io/badge/License-BSD_2--Clause-orange.svg)](LICENSE)
 
 </div>
